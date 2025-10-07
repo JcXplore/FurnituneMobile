@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Furnitune-Mobile",
+    "slug": "Furnitune-Mobile",
+    "scheme": "Furnitune-Mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "owner": "furnitune",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      "expo-web-browser"
+    ],
+    "android": {
+      "package": "com.furniture-mobile.furnitune"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6c975ddb-734f-4a18-a26e-b4a1b5757fe7"
+      }
+    }
+  }
+}
