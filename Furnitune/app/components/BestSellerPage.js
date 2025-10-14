@@ -8,12 +8,17 @@ import {
   ScrollView,
   ActivityIndicator,
   Modal,
+  Platform,
+  StatusBar,
+  Animated,
+  Easing,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "./firebaseConfig";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { Image } from "expo-image";
+import FilterModal from "./FilterModal";
 
 export default function ProductPage({ navigation, route }) {
   const [products, setProducts] = useState([]);
@@ -33,9 +38,33 @@ export default function ProductPage({ navigation, route }) {
   const toggleFilter = (category, value) => {
     setFilters((prev) => {
       const current = prev[category] || [];
-      return current.includes(value)
-        ? { ...prev, [category]: current.filter((v) => v !== value) }
-        : { ...prev, [category]: [...current, value] };
+      const updated = current.includes(value)
+        ? current.filter((v) => v !== value)
+        : [...current, value];
+
+      // 🔹 Sync with CategoryBar if type filter changes
+      if (category === "type") {
+        if (updated.length === 1) {
+          // One type selected → focus that category
+          setSelectedCategory(updated[0]);
+        } else {
+          // Two or more types (or none) → reset to "All"
+          setSelectedCategory("All");
+        }
+      }
+
+      return { ...prev, [category]: updated };
+    });
+  };
+
+
+  const resetFilters = () => {
+    setFilters({
+      type: [],
+      sizes: [],
+      materials: [],
+      seats: [],
+      shapes: [],
     });
   };
 
@@ -51,16 +80,12 @@ export default function ProductPage({ navigation, route }) {
     const fetchProducts = async () => {
       const storage = getStorage();
       try {
-        const q = query(
-          collection(db, "products"),
-          where("isBestSeller", "==", true) // 🔹 adjust field if needed
-        );
+        const q = query(collection(db, "products"), where("isBestSeller", "==", true));
         const querySnapshot = await getDocs(q);
         const list = await Promise.all(
           querySnapshot.docs.map(async (doc) => {
             const data = doc.data();
 
-            // Try to load thumbnail, fallback to first image
             let imageUrl = null;
             if (data.thumbnail) {
               try {
@@ -104,19 +129,12 @@ export default function ProductPage({ navigation, route }) {
 
   // Filtering logic
   const filteredProducts = products.filter((p) => {
-    if (selectedCategory !== "All" && p.category !== selectedCategory)
-      return false;
-    if (filters.type.length > 0 && !filters.type.includes(p.category))
-      return false;
-    if (filters.sizes.length > 0 && !filters.sizes.includes(p.size))
-      return false;
-    if (filters.materials.length > 0 && !filters.materials.includes(p.material))
-      return false;
-    if (filters.seats.length > 0 && !filters.seats.includes(p.seats))
-      return false;
-    if (filters.shapes.length > 0 && !filters.shapes.includes(p.shape))
-      return false;
-
+    if (selectedCategory !== "All" && p.category !== selectedCategory) return false;
+    if (filters.type.length > 0 && !filters.type.includes(p.category)) return false;
+    if (filters.sizes.length > 0 && !filters.sizes.includes(p.size)) return false;
+    if (filters.materials.length > 0 && !filters.materials.includes(p.material)) return false;
+    if (filters.seats.length > 0 && !filters.seats.includes(p.seats)) return false;
+    if (filters.shapes.length > 0 && !filters.shapes.includes(p.shape)) return false;
     return true;
   });
 
@@ -158,17 +176,11 @@ export default function ProductPage({ navigation, route }) {
         {["All", ...new Set(products.map((p) => p.category))].map((cat) => (
           <TouchableOpacity
             key={cat}
-            style={[
-              styles.filterBtn,
-              selectedCategory === cat && styles.activeFilter,
-            ]}
+            style={[styles.filterBtn, selectedCategory === cat && styles.activeFilter]}
             onPress={() => setSelectedCategory(cat)}
           >
             <Text
-              style={[
-                styles.filterText,
-                selectedCategory === cat && styles.activeFilterText,
-              ]}
+              style={[styles.filterText, selectedCategory === cat && styles.activeFilterText]}
             >
               {cat}
             </Text>
@@ -178,21 +190,38 @@ export default function ProductPage({ navigation, route }) {
     </View>
   );
 
-  // Sidebar filter component
-  const FilterSidebar = () => (
-    <ScrollView style={styles.filterContainer}>
-      <Text style={styles.filterHeader}>BEST SELLERS</Text>
-      {/* Filters (Type, Sizes, Materials, etc.) */}
-      {/* Same as your original */}
-      {/* ... */}
-      <TouchableOpacity
-        style={styles.applyBtn}
-        onPress={() => setFilterVisible(false)}
-      >
-        <Text style={styles.applyText}>Apply Filters</Text>
-      </TouchableOpacity>
-    </ScrollView>
-  );
+  // 🔹 Animation logic
+  const [slideAnim] = useState(new Animated.Value(0));
+
+  useEffect(() => {
+    if (filterVisible) {
+      Animated.timing(slideAnim, {
+        toValue: 1,
+        duration: 350,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 300,
+        easing: Easing.in(Easing.ease),
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [filterVisible]);
+
+  const slideUp = {
+    transform: [
+      {
+        translateY: slideAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [800, 0],
+        }),
+      },
+    ],
+    opacity: slideAnim,
+  };
 
   return (
     <View style={styles.container}>
@@ -206,7 +235,6 @@ export default function ProductPage({ navigation, route }) {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <View>
-            {/* Header row */}
             <View style={styles.headerRow}>
               <Text style={styles.header}>BEST SELLERS</Text>
               <TouchableOpacity
@@ -228,30 +256,27 @@ export default function ProductPage({ navigation, route }) {
         <ActivityIndicator style={styles.loading} size="small" color="#2c6e49" />
       )}
 
-      {/* Filter Modal */}
-      <Modal visible={filterVisible} animationType="slide">
-        <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          <View style={styles.filterHeaderRow}>
-            <Text style={styles.header}>Filters</Text>
-            <TouchableOpacity onPress={() => setFilterVisible(false)}>
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-          <FilterSidebar />
-        </View>
-      </Modal>
+      {/* Animated Filter Modal */}
+      <FilterModal
+              visible={filterVisible}
+              onClose={() => setFilterVisible(false)}
+              filters={filters}
+              toggleFilter={toggleFilter}
+              resetFilters={resetFilters}
+              mode="allTypes"                 // all types mode
+      />
     </View>
   );
 }
 
-
-const styles = StyleSheet.create({
+export const styles = StyleSheet.create({
+  // 🔹 App Container
   container: {
     flex: 1,
     backgroundColor: "#fff",
   },
 
-  // 🔹 Header Row
+  // 🔹 Header
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -265,8 +290,10 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#222",
+    color: "#2c6e49", // unified
   },
+
+  // 🔹 Filter Button
   filterButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -282,7 +309,7 @@ const styles = StyleSheet.create({
     color: "#333",
   },
 
-  // 🔹 Category Bar
+  // 🔹 Category Filters
   categoryContainer: {
     backgroundColor: "#fff",
     paddingVertical: 10,
@@ -300,12 +327,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#f3f3f3",
     marginRight: 10,
   },
-  activeFilter: {
-    backgroundColor: "#2c6e49",
-  },
   filterText: {
     fontSize: 14,
     color: "#555",
+  },
+  activeFilter: {
+    backgroundColor: "#2c6e49",
   },
   activeFilterText: {
     color: "#fff",
@@ -358,58 +385,51 @@ const styles = StyleSheet.create({
     color: "#777",
   },
 
-  // 🔹 Sidebar Filters
-  filterContainer: {
-    padding: 16,
+  // 🔹 Filter Modal
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    justifyContent: "flex-end",
+  },
+  modalWrapper: {
+    flex: 1,
     backgroundColor: "#fff",
+    height: "100%",
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
-  filterHeader: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 12,
-    color: "#222",
-  },
-  sectionTitle: {
-    marginTop: 16,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
-  },
-  checkboxRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  checkboxLabel: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: "#444",
-  },
-  applyBtn: {
-    marginTop: 20,
-    backgroundColor: "#2c6e49",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  applyText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 15,
-  },
-
-  // 🔹 Filter Modal Header
   filterHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
+    backgroundColor: "#fff",
+    elevation: 3,
+  },
+  filterContainer: {
+    flex: 1,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: "#FAF8F2",
+  },
+  sidebarTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    letterSpacing: 1,
+    color: "#2C2C2C",
+    textTransform: "uppercase",
+    marginBottom: 10,
+    textShadowColor: "rgba(0,0,0,0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#B8B6AE",
+    paddingBottom: 6,
   },
 
-  // 🔹 Loading
+  // 🔹 Loading Indicator
   loading: {
     position: "absolute",
     top: "50%",

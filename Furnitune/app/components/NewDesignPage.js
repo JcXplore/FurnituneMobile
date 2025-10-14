@@ -7,13 +7,16 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Modal,
+  Platform,
+  StatusBar,
+  
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "./firebaseConfig";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { Image } from "expo-image";
+import FilterModal from "./FilterModal";
 
 export default function NewArrivalsPage({ navigation, route }) {
   const [products, setProducts] = useState([]);
@@ -33,9 +36,32 @@ export default function NewArrivalsPage({ navigation, route }) {
   const toggleFilter = (category, value) => {
     setFilters((prev) => {
       const current = prev[category] || [];
-      return current.includes(value)
-        ? { ...prev, [category]: current.filter((v) => v !== value) }
-        : { ...prev, [category]: [...current, value] };
+      const updated = current.includes(value)
+        ? current.filter((v) => v !== value)
+        : [...current, value];
+
+      // 🔹 Sync with CategoryBar if type filter changes
+      if (category === "type") {
+        if (updated.length === 1) {
+          // One type selected → focus that category
+          setSelectedCategory(updated[0]);
+        } else {
+          // Two or more types (or none) → reset to "All"
+          setSelectedCategory("All");
+        }
+      }
+
+      return { ...prev, [category]: updated };
+    });
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      type: [],
+      sizes: [],
+      materials: [],
+      seats: [],
+      shapes: [],
     });
   };
 
@@ -45,7 +71,13 @@ export default function NewArrivalsPage({ navigation, route }) {
       setSelectedCategory(route.params.product);
     }
   }, [route?.params]);
-
+  useEffect(() => {
+  if (filters.type.length === 1) {
+    setSelectedCategory(filters.type[0]);
+  } else if (filters.type.length === 0) {
+    setSelectedCategory("All");
+  }
+}, [filters.type]);
   // Fetch ONLY new products from Firestore
   useEffect(() => {
     const fetchProducts = async () => {
@@ -229,27 +261,25 @@ export default function NewArrivalsPage({ navigation, route }) {
       )}
 
       {/* Filter Modal */}
-      <Modal visible={filterVisible} animationType="slide">
-        <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          <View style={styles.filterHeaderRow}>
-            <Text style={styles.header}>Filters</Text>
-            <TouchableOpacity onPress={() => setFilterVisible(false)}>
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-          <FilterSidebar />
-        </View>
-      </Modal>
+      <FilterModal
+              visible={filterVisible}
+              onClose={() => setFilterVisible(false)}
+              filters={filters}
+              toggleFilter={toggleFilter}
+              resetFilters={resetFilters}
+              mode="allTypes"                 // all types mode
+            />
     </View>
   );
 }
-const styles = StyleSheet.create({
+export const styles = StyleSheet.create({
+  // 🔹 General Container
   container: {
     flex: 1,
     backgroundColor: "#fff",
   },
 
-  // 🔹 Header Row
+  // 🔹 Header Row (Main Screen)
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -260,11 +290,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
+
+  // 🔹 Header Title
   header: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#222",
+    color: "#2c6e49", // unified from #222 and #2c6e49
   },
+
+  // 🔹 Filter Button
   filterButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -356,58 +390,66 @@ const styles = StyleSheet.create({
     color: "#777",
   },
 
-  // 🔹 Sidebar Filters
-  filterContainer: {
-    padding: 16,
+  // 🔹 Filter Modal Wrapper
+  modalWrapper: {
+    flex: 1,
     backgroundColor: "#fff",
-  },
-  filterHeader: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 12,
-    color: "#222",
-  },
-  sectionTitle: {
-    marginTop: 16,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
-  },
-  checkboxRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  checkboxLabel: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: "#444",
-  },
-  applyBtn: {
-    marginTop: 20,
-    backgroundColor: "#2c6e49",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  applyText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 15,
+    height: "100%",
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
 
-  // 🔹 Filter Modal Header
+  // 🔹 Filter Modal Header Row
   filterHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
+    backgroundColor: "#fff",
+    elevation: 3,
   },
 
-  // 🔹 Loading
+  // 🔹 Sidebar / Filter Container
+  filterContainer: {
+    flex: 1,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: "#FAF8F2",
+  },
+
+  // 🔹 Sidebar Title (e.g., All Furniture)
+  sidebarTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    letterSpacing: 1,
+    color: "#2C2C2C",
+    textTransform: "uppercase",
+    marginBottom: 10,
+    textShadowColor: "rgba(0,0,0,0.2)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#B8B6AE",
+    paddingBottom: 6,
+  },
+
+  // 🔹 Section Wrapper
+  section: {
+    marginTop: 14,
+    marginBottom: 6,
+  },
+
+  // 🔹 Section Header
+  sectionHeader: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#3A3A3A",
+    marginBottom: 8,
+  },
+
+  // 🔹 Loading Indicator
   loading: {
     position: "absolute",
     top: "50%",
@@ -416,4 +458,3 @@ const styles = StyleSheet.create({
     marginTop: -12,
   },
 });
-

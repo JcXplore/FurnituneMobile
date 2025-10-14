@@ -7,7 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import LandingPage from "./app/components/LandingPage";
 import ProductPage from "./app/components/ProductPage";
 import MenuBar from "./app/components/MenuBar";
-import ProductDetails from "./app/components/ProductPage";
+import ProductDetails from "./app/components/ProductDetails";
 import BottomTabs from "./app/components/BottomTabs";
 import LoginPage from "./app/components/LoginPage";
 import BestSellerPage from "./app/components/BestSellerPage";
@@ -23,6 +23,7 @@ import MyPurchases from "./app/components/MyPurchases";
 import SignupScreen from "./app/components/SignupScreen";
 import CartPage from "./app/components/CartPage";
 import NotificationPage from "./app/components/NotificationPage";
+import CustomizationPage from "./app/components/CustomizationPage";
 
 const Stack = createStackNavigator();
 
@@ -128,6 +129,7 @@ export default function App() {
               </LayoutWrapper>
             )}
           </Stack.Screen>
+          
           <Stack.Screen name="Repair">
             {(props) => (
               <LayoutWrapper>
@@ -140,6 +142,14 @@ export default function App() {
             {(props) => (
               <LayoutWrapper>
                 <Customization {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
+          <Stack.Screen name="CustomizationPage">
+            {(props) => (
+              <LayoutWrapper>
+                <CustomizationPage {...props} />
               </LayoutWrapper>
             )}
           </Stack.Screen>

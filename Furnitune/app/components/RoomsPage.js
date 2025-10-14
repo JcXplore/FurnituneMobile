@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,28 +7,60 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, query } from "firebase/firestore";
 import { db } from "./firebaseConfig";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { Image } from "expo-image";
+import FilterModal from "./FilterModal";
 
-export default function ProductPage({ navigation, route }) {
+export default function RoomsPage({ navigation, route }) {
   const [products, setProducts] = useState([]);
   const [selectedDepartment, setSelectedDepartment] = useState("All");
+  const [selectedTypes, setSelectedTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterVisible, setFilterVisible] = useState(false);
 
-  // ✅ Check if a department was passed from MenuBar
+  // ✅ new filter state for FilterModal
+  const [filters, setFilters] = useState({
+    type: [],
+    sizes: [],
+    materials: [],
+    numberofseats: [],
+    productshape: [],
+  });
+
+  // ✅ Reset all filters
+  const resetFilters = () =>
+    setFilters({
+      type: [],
+      sizes: [],
+      materials: [],
+      numberofseats: [],
+      productshape: [],
+    });
+
+  // ✅ Toggle filters dynamically
+  const toggleFilter = (key, value) => {
+    setFilters((prev) => {
+      const currentValues = prev[key] || [];
+      if (currentValues.includes(value)) {
+        return { ...prev, [key]: currentValues.filter((v) => v !== value) };
+      } else {
+        return { ...prev, [key]: [...currentValues, value] };
+      }
+    });
+  };
+
+  // ✅ Capture department from MenuBar (if passed)
   useEffect(() => {
     if (route?.params?.department) {
       setSelectedDepartment(route.params.department);
     }
   }, [route?.params]);
 
-  // Load products from Firestore
+  // ✅ Fetch all products
   useEffect(() => {
     const fetchProducts = async () => {
       const storage = getStorage();
@@ -40,7 +72,6 @@ export default function ProductPage({ navigation, route }) {
           querySnapshot.docs.map(async (doc) => {
             const data = doc.data();
 
-            // Try to load thumbnail, fallback to first image
             let imageUrl = null;
             if (data.thumbnail) {
               try {
@@ -64,10 +95,11 @@ export default function ProductPage({ navigation, route }) {
               rating: data.ratingAvg ?? 0,
               reviews: data.reviewsCount ?? 0,
               departmentSlug: data.departmentSlug || "uncategorized",
-              category: data.baseType || "Uncategorized",
+              type: data.baseType || "Uncategorized",
             };
           })
         );
+
         setProducts(list);
       } catch (err) {
         console.error("Error fetching products:", err);
@@ -79,13 +111,30 @@ export default function ProductPage({ navigation, route }) {
     fetchProducts();
   }, []);
 
-  // Apply department filter
+  // ✅ Get furniture types available in selected department
+  const availableTypes = useMemo(() => {
+    const filtered =
+      selectedDepartment === "All"
+        ? products
+        : products.filter((p) => p.departmentSlug === selectedDepartment);
+
+    const types = [...new Set(filtered.map((p) => p.type))];
+    return types.sort();
+  }, [products, selectedDepartment]);
+
+  // ✅ Filter products based on selected department and types
   const filteredProducts = products.filter((p) => {
-    if (selectedDepartment === "All") return true;
-    return p.departmentSlug === selectedDepartment;
+    const departmentMatch =
+      selectedDepartment === "All" || p.departmentSlug === selectedDepartment;
+
+    const typeFilters = filters.type;
+    const typeMatch =
+      typeFilters.length === 0 || typeFilters.includes(p.type);
+
+    return departmentMatch && typeMatch;
   });
 
-  // Product card
+  // ✅ Product card
   const renderProduct = ({ item }) => (
     <TouchableOpacity
       style={styles.card}
@@ -112,7 +161,7 @@ export default function ProductPage({ navigation, route }) {
     </TouchableOpacity>
   );
 
-  // Department filter bar
+  // ✅ Department bar
   const DepartmentBar = (
     <View style={styles.categoryContainer}>
       <ScrollView
@@ -128,7 +177,10 @@ export default function ProductPage({ navigation, route }) {
                 styles.filterBtn,
                 selectedDepartment === dep && styles.activeFilter,
               ]}
-              onPress={() => setSelectedDepartment(dep)}
+              onPress={() => {
+                setSelectedDepartment(dep);
+                resetFilters(); // reset all filters when changing department
+              }}
             >
               <Text
                 style={[
@@ -151,7 +203,6 @@ export default function ProductPage({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      {/* Product list */}
       <FlatList
         data={filteredProducts}
         renderItem={renderProduct}
@@ -161,7 +212,6 @@ export default function ProductPage({ navigation, route }) {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <View>
-            {/* Header row */}
             <View style={styles.headerRow}>
               <Text style={styles.header}>PRODUCTS</Text>
               <TouchableOpacity
@@ -178,7 +228,6 @@ export default function ProductPage({ navigation, route }) {
         stickyHeaderIndices={[0]}
       />
 
-      {/* Loading */}
       {loading && (
         <ActivityIndicator
           style={styles.loading}
@@ -187,42 +236,19 @@ export default function ProductPage({ navigation, route }) {
         />
       )}
 
-      {/* Filter Modal */}
-      <Modal visible={filterVisible} animationType="slide">
-        <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          <View style={styles.filterHeaderRow}>
-            <Text style={styles.header}>Filters</Text>
-            <TouchableOpacity onPress={() => setFilterVisible(false)}>
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-          {/* Example content */}
-          <ScrollView style={styles.filterContainer}>
-            <Text style={styles.filterHeader}>Department</Text>
-            {["Living Room", "Bedroom", "Dining Room", "Outdoor"].map((dep) => (
-              <TouchableOpacity
-                key={dep}
-                style={styles.checkboxRow}
-                onPress={() =>
-                  setSelectedDepartment(dep.toLowerCase().replace(" ", "-"))
-                }
-              >
-                <Text style={styles.checkboxLabel}>{dep}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={styles.applyBtn}
-              onPress={() => setFilterVisible(false)}
-            >
-              <Text style={styles.applyText}>Apply Filters</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
-      </Modal>
+      {/* ✅ Filter Modal */}
+      <FilterModal
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        filters={filters}
+        toggleFilter={toggleFilter}
+        resetFilters={resetFilters}
+        mode="department"               // department mode
+        selectedDepartment={selectedDepartment}
+      />
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
 
@@ -299,28 +325,6 @@ const styles = StyleSheet.create({
   name: { fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 4 },
   price: { fontSize: 14, fontWeight: "bold", color: "#2c6e49", marginBottom: 4 },
   rating: { fontSize: 12, color: "#777" },
-
-  // 🔹 Filter Modal
-  filterContainer: { padding: 16, backgroundColor: "#fff" },
-  filterHeader: { fontSize: 16, fontWeight: "700", marginBottom: 12, color: "#222" },
-  checkboxRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-  checkboxLabel: { marginLeft: 8, fontSize: 14, color: "#444" },
-  applyBtn: {
-    marginTop: 20,
-    backgroundColor: "#2c6e49",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  applyText: { color: "#fff", fontWeight: "600", fontSize: 15 },
-  filterHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
 
   // 🔹 Loading
   loading: {

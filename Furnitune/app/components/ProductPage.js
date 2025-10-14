@@ -8,12 +8,16 @@ import {
   ScrollView,
   ActivityIndicator,
   Modal,
+  Platform,
+  StatusBar,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "./firebaseConfig";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { Image } from "expo-image";
+import FilterModal from "./FilterModal";
+
 
 export default function ProductPage({ navigation, route }) {
   const [products, setProducts] = useState([]);
@@ -33,11 +37,34 @@ export default function ProductPage({ navigation, route }) {
   const toggleFilter = (category, value) => {
     setFilters((prev) => {
       const current = prev[category] || [];
-      return current.includes(value)
-        ? { ...prev, [category]: current.filter((v) => v !== value) }
-        : { ...prev, [category]: [...current, value] };
+      const updated = current.includes(value)
+        ? current.filter((v) => v !== value)
+        : [...current, value];
+
+      // 🔹 Sync with CategoryBar if type filter changes
+      if (category === "type") {
+        if (updated.length === 1) {
+          // One type selected → focus that category
+          setSelectedCategory(updated[0]);
+        } else {
+          // Two or more types (or none) → reset to "All"
+          setSelectedCategory("All");
+        }
+      }
+
+      return { ...prev, [category]: updated };
     });
   };
+
+  const resetFilters = () => {
+  setFilters({
+    type: [],
+    sizes: [],
+    materials: [],
+    seats: [],
+    shapes: [],
+  });
+};
 
   // Load selected category if passed from navigation
   useEffect(() => {
@@ -187,49 +214,54 @@ export default function ProductPage({ navigation, route }) {
 
   // Sidebar filter component
   const FilterSidebar = () => (
-    <ScrollView style={styles.filterContainer}>
-      <Text style={styles.filterHeader}>ALL FURNITURES</Text>
+  <ScrollView style={styles.filterContainer} showsVerticalScrollIndicator={false}>
+    <Text style={styles.sidebarTitle}>ALL FURNITURES</Text>
 
-      {/* Type */}
-      <Text style={styles.sectionTitle}>Type</Text>
-      {["Beds", "Sofas", "Chairs", "Tables", "Benches", "Sectionals", "Ottomans"].map(
-        (t) => (
-          <TouchableOpacity
-            key={t}
-            style={styles.checkboxRow}
-            onPress={() => toggleFilter("type", t)}
-          >
-            <Ionicons
-              name={filters.type.includes(t) ? "checkbox-outline" : "square-outline"}
-              size={18}
-              color="#333"
-            />
-            <Text style={styles.checkboxLabel}>{t}</Text>
-          </TouchableOpacity>
-        )
-      )}
+    {/* Type */}
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Type</Text>
+      {["Beds", "Sofas", "Chairs", "Tables", "Benches", "Sectionals", "Ottomans"].map((t) => (
+        <TouchableOpacity
+          key={t}
+          style={styles.checkboxRow}
+          onPress={() => toggleFilter("type", t)}
+        >
+          <Ionicons
+            name={filters.type.includes(t) ? "checkbox-outline" : "square-outline"}
+            size={18}
+            color="#333"
+          />
+          <Text style={styles.checkboxLabel}>{t}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
 
-      {/* Sizes */}
-      <Text style={styles.sectionTitle}>Sizes</Text>
-      {["Smaller than 60", '60" - 69"', '70" - 79"', '80" - 89"', '90" - 99"'].map(
-        (s) => (
-          <TouchableOpacity
-            key={s}
-            style={styles.checkboxRow}
-            onPress={() => toggleFilter("sizes", s)}
-          >
-            <Ionicons
-              name={filters.sizes.includes(s) ? "checkbox-outline" : "square-outline"}
-              size={18}
-              color="#333"
-            />
-            <Text style={styles.checkboxLabel}>{s}</Text>
-          </TouchableOpacity>
-        )
-      )}
+    <View style={styles.divider} />
 
-      {/* Materials */}
-      <Text style={styles.sectionTitle}>Materials</Text>
+    {/* Sizes */}
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Sizes</Text>
+      {["Smaller than 60", '60" - 69"', '70" - 79"', '80" - 89"', '90" - 99"'].map((s) => (
+        <TouchableOpacity
+          key={s}
+          style={styles.checkboxRow}
+          onPress={() => toggleFilter("sizes", s)}
+        >
+          <Ionicons
+            name={filters.sizes.includes(s) ? "checkbox-outline" : "square-outline"}
+            size={18}
+            color="#333"
+          />
+          <Text style={styles.checkboxLabel}>{s}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+
+    <View style={styles.divider} />
+
+    {/* Materials */}
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Materials</Text>
       {["Fabrics", "Leather", "Wood"].map((m) => (
         <TouchableOpacity
           key={m}
@@ -241,19 +273,73 @@ export default function ProductPage({ navigation, route }) {
             size={18}
             color="#333"
           />
-          <Text style={styles.checkboxLabel}>{m}</Text>
+          <Text style={styles.checkboxLabel}>
+            {m}
+            {m === "Fabrics" && (
+              <Text style={styles.subText}> (Marble, Terracota, etc.)</Text>
+            )}
+          </Text>
         </TouchableOpacity>
       ))}
+    </View>
 
-      {/* Apply */}
+    <View style={styles.divider} />
+
+    {/* Number of Seats */}
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Number of Seats</Text>
+      {["4 Seater", "6 Seater", "8 Seater", "Extendable"].map((n) => (
+        <TouchableOpacity
+          key={n}
+          style={styles.checkboxRow}
+          onPress={() => toggleFilter("seats", n)}
+        >
+          <Ionicons
+            name={filters.seats.includes(n) ? "checkbox-outline" : "square-outline"}
+            size={18}
+            color="#333"
+          />
+          <Text style={styles.checkboxLabel}>{n}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+
+    <View style={styles.divider} />
+
+    {/* Product Shape */}
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Product Shape</Text>
+      {["Rectangle", "Round", "Square"].map((sh) => (
+        <TouchableOpacity
+          key={sh}
+          style={styles.checkboxRow}
+          onPress={() => toggleFilter("shapes", sh)}
+        >
+          <Ionicons
+            name={filters.shapes.includes(sh) ? "checkbox-outline" : "square-outline"}
+            size={18}
+            color="#333"
+          />
+          <Text style={styles.checkboxLabel}>{sh}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+
+    <View style={styles.buttonRow}>
+      <TouchableOpacity style={styles.resetBtn} onPress={resetFilters}>
+        <Text style={styles.resetText}>Reset</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity
         style={styles.applyBtn}
         onPress={() => setFilterVisible(false)}
       >
         <Text style={styles.applyText}>Apply Filters</Text>
       </TouchableOpacity>
-    </ScrollView>
-  );
+    </View>
+  </ScrollView>
+);
+
 
   return (
     <View style={styles.container}>
@@ -291,17 +377,15 @@ export default function ProductPage({ navigation, route }) {
       )}
 
       {/* Filter Modal */}
-      <Modal visible={filterVisible} animationType="slide">
-        <View style={{ flex: 1, backgroundColor: "#fff" }}>
-          <View style={styles.filterHeaderRow}>
-            <Text style={styles.header}>Filters</Text>
-            <TouchableOpacity onPress={() => setFilterVisible(false)}>
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-          <FilterSidebar />
-        </View>
-      </Modal>
+      
+      <FilterModal
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        filters={filters}
+        toggleFilter={toggleFilter}
+        resetFilters={resetFilters}
+        mode="allTypes"                 // all types mode
+      />
     </View>
   );
 }
@@ -328,6 +412,23 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#2c6e49",
   },
+  filterHeaderRow: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  paddingHorizontal: 16,
+  paddingVertical: 14,
+  borderBottomWidth: 1,
+  borderBottomColor: "#eee",
+  backgroundColor: "#fff",
+  elevation: 3,
+},
+filterHeaderTitle: {
+  fontSize: 18,
+  fontWeight: "bold",
+  color: "#2C2C2C",
+  textTransform: "uppercase",
+},
   filterButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -429,63 +530,118 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* 🔹 Filter Modal */
-  filterContainer: {
-    padding: 16,
-    backgroundColor: "#fff",
-  },
-  filterHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  filterHeader: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#2c6e49",
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginTop: 16,
-    marginBottom: 8,
-    color: "#333",
-  },
-  checkboxRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  checkboxLabel: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: "#333",
-  },
-  applyBtnWrapper: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "#fff",
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#ddd",
-  },
-  applyBtn: {
-    padding: 14,
-    backgroundColor: "#2c6e49",
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  applyText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 16,
-  },
 
+sidebarTitle: {
+  fontSize: 16,
+  fontWeight: "bold",
+  letterSpacing: 1,
+  color: "#2C2C2C",
+  textTransform: "uppercase",
+  marginBottom: 10,
+  textShadowColor: "rgba(0,0,0,0.2)",
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 1,
+  borderBottomWidth: 0.5,
+  borderBottomColor: "#B8B6AE",
+  paddingBottom: 6,
+},
+
+section: {
+  marginTop: 14,
+  marginBottom: 6,
+},
+
+sectionHeader: {
+  fontSize: 13,
+  fontWeight: "600",
+  color: "#3A3A3A",
+  marginBottom: 8,
+},
+
+checkboxRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  marginBottom: 6,
+  paddingLeft: 6,
+},
+
+checkboxLabel: {
+  marginLeft: 8,
+  fontSize: 13,
+  color: "#333",
+},
+
+subText: {
+  fontStyle: "italic",
+  color: "#777",
+  fontSize: 12,
+},
+
+divider: {
+  height: 1,
+  backgroundColor: "#D8D6CC",
+  marginVertical: 10,
+},
+
+applyContainer: {
+  position: "absolute",
+  bottom: 0,
+  left: 0,
+  right: 0,
+  backgroundColor: "#FAF8F2",
+  paddingHorizontal: 20,
+  paddingTop: 10,
+  paddingBottom: 10,
+  borderTopWidth: 1,
+  borderTopColor: "#D8D6CC",
+  elevation: 8,
+  shadowColor: "#000",
+  shadowOpacity: 0.15,
+  shadowOffset: { width: 0, height: -2 },
+  shadowRadius: 6,
+},
+buttonRow: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginTop: 20,
+  marginBottom: 10,
+  gap: 10,
+},
+
+resetBtn: {
+  flex: 1,
+  backgroundColor: "#e0e0e0",
+  paddingVertical: 12,
+  borderRadius: 8,
+  alignItems: "center",
+},
+
+resetText: {
+  color: "#333",
+  fontWeight: "600",
+  fontSize: 15,
+},
+
+applyBtn: {
+  flex: 1,
+  backgroundColor: "#2c6e49",
+  paddingVertical: 12,
+  borderRadius: 8,
+  alignItems: "center",
+},
+applyText: {
+  color: "#fff",
+  fontWeight: "700",
+  fontSize: 15,
+  letterSpacing: 0.5,
+},
+modalWrapper: {
+  flex: 1,
+  backgroundColor: "#fff",
+  height: "100%",
+  paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
+},
   /* 🔹 Loading */
   loading: {
     position: "absolute",

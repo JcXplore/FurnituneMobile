@@ -9,10 +9,11 @@ const firebaseConfig = {
   apiKey: "AIzaSyCYHjH1hIdCFyyOgCzjwxMf3KsZ0yXtHSM",
   authDomain: "furnitune-64458.firebaseapp.com",
   projectId: "furnitune-64458",
-  storageBucket: "furnitune-64458.appspot.com", // 👈 correct storage bucket
+  storageBucket: "furnitune-64458.firebasestorage.app", // 👈 correct storage bucket
   messagingSenderId: "533053483607",
   appId: "1:533053483607:android:62a257e92b74db878a1112",
   measurementId: "G-GE7DYZWPW7",
+  
 };
 
 // Initialize Firebase only once
