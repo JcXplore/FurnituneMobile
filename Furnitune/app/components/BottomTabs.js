@@ -1,8 +1,11 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   TouchableOpacity,
   TouchableWithoutFeedback,
+  Image,
+  Alert,
+  Text,
 } from "react-native";
 import {
   Ionicons,
@@ -10,58 +13,91 @@ import {
   FontAwesome5,
 } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
-import styles from "../styles/bottomStyle";
+import {
+  useNavigation,
+  useRoute,
+  useFocusEffect,
+} from "@react-navigation/native";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, db } from "./firebaseConfig";
+import { collection, onSnapshot, doc } from "firebase/firestore";
 
 export default function BottomTabs() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const route = useRoute();
+
   const [activeTab, setActiveTab] = useState("home");
   const [showSubMenu, setShowSubMenu] = useState(false);
+  const [user, setUser] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0); // 🔹 Notification count
 
-  // ✅ Automatically set active tab based on current screen
+  // ✅ Listen to Firebase Auth state
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+    });
+    return unsubscribeAuth;
+  }, []);
+
+  // ✅ Real-time listener for user notifications
+  useEffect(() => {
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const userDocRef = doc(db, "users", user.uid);
+    const notificationsRef = collection(userDocRef, "notifications");
+
+    // 🔁 Listen in real-time for unread notifications
+    const unsubscribe = onSnapshot(notificationsRef, (snapshot) => {
+      const unread = snapshot.docs.filter((doc) => !doc.data().read).length;
+      setUnreadCount(unread);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // ✅ Track active route
   useFocusEffect(
     useCallback(() => {
       if (route.name === "Landing") setActiveTab("home");
       else if (route.name === "CartPage") setActiveTab("cart");
-      else if (route.name === "HomePage") setActiveTab("robot");
       else if (route.name === "NotificationPage") setActiveTab("notifications");
-      else if (route.name === "LoginPage") setActiveTab("user");
-      else if (route.name === "Customization") setActiveTab("robot");
-      else if (route.name === "Repair") setActiveTab("robot");
+      else if (["LoginPage", "Settings"].includes(route.name))
+        setActiveTab("user");
+      else if (["Customization", "Repair", "ChatbotPage"].includes(route.name))
+        setActiveTab("robot");
     }, [route.name])
   );
 
+  // ✅ Smart navigation handler
   const handlePress = (tab, routeName) => {
     setActiveTab(tab);
+    setShowSubMenu(false);
+
+    // 🚫 Restrict access if user is not logged in
+    const restricted = ["CartPage", "NotificationPage", "Settings"];
+    if (!user && restricted.includes(routeName)) {
+      Alert.alert("Login Required", "Please log in to access this feature.");
+      navigation.navigate("LoginPage");
+      return;
+    }
 
     if (tab === "robot") {
-      // toggle submenu instead of navigating immediately
       setShowSubMenu((prev) => !prev);
       return;
     }
 
-    setShowSubMenu(false);
     if (routeName) navigation.navigate(routeName);
   };
 
-  // ✅ When submenu is dismissed, sync active tab to current route
-  const handleDismiss = () => {
-    setShowSubMenu(false);
-
-    // ensure active tab matches current screen
-    if (route.name === "Landing") setActiveTab("home");
-    else if (route.name === "CartPage") setActiveTab("cart");
-    else if (route.name === "HomePage") setActiveTab("robot");
-    else if (route.name === "NotificationPage") setActiveTab("notifications");
-    else if (route.name === "LoginPage") setActiveTab("user");
-    else setActiveTab("home");
-  };
+  const handleDismiss = () => setShowSubMenu(false);
 
   return (
     <>
-      {/* ✅ Transparent overlay to dismiss submenu */}
+      {/* 🪟 Dismiss overlay */}
       {showSubMenu && (
         <TouchableWithoutFeedback onPress={handleDismiss}>
           <View
@@ -77,75 +113,83 @@ export default function BottomTabs() {
         </TouchableWithoutFeedback>
       )}
 
-      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-        {/* ❤️ Home */}
-        <TouchableOpacity
-          style={styles.item}
-          onPress={() => handlePress("home", "Landing")}
-        >
+      {/* 🧭 Bottom Navigation */}
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-evenly",
+          alignItems: "center",
+          paddingVertical: 10,
+          paddingBottom: insets.bottom,
+          backgroundColor: "#fff",
+          borderTopWidth: 1,
+          borderColor: "#ccc",
+        }}
+      >
+        {/* 🏠 Home */}
+        <TouchableOpacity onPress={() => handlePress("home", "Landing")}>
           <Ionicons
             name="home-outline"
-            size={24}
+            size={26}
             color={activeTab === "home" ? "#2c6e49" : "black"}
           />
         </TouchableOpacity>
 
-        <View style={styles.divider} />
+        <Divider />
 
         {/* 🛒 Cart */}
-        <TouchableOpacity
-          style={styles.item}
-          onPress={() => handlePress("cart", "CartPage")}
-        >
+        <TouchableOpacity onPress={() => handlePress("cart", "CartPage")}>
           <Ionicons
             name="cart-outline"
-            size={24}
+            size={26}
             color={activeTab === "cart" ? "#2c6e49" : "black"}
           />
         </TouchableOpacity>
 
-        <View style={styles.divider} />
+        <Divider />
 
-        {/* 🤖 AI */}
+        {/* 🤖 AI Submenu */}
         <View style={{ alignItems: "center" }}>
           {showSubMenu && (
             <View
               style={{
                 position: "absolute",
-                bottom: 60,
+                bottom: 55,
                 flexDirection: "row",
                 backgroundColor: "#fff",
                 borderRadius: 20,
-                padding: 10,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
                 elevation: 5,
                 shadowColor: "#000",
                 shadowOpacity: 0.2,
                 shadowRadius: 5,
-                justifyContent: "space-around",
+                justifyContent: "space-between",
                 width: 180,
               }}
             >
-              {/* Customization */}
               <TouchableOpacity
                 onPress={() => {
                   setShowSubMenu(false);
-                  navigation.navigate("Customization");
+                  navigation.navigate("CustomizationPage");
                 }}
               >
                 <Ionicons name="settings-outline" size={24} color="#2c6e49" />
               </TouchableOpacity>
 
-              {/* Chatbot (center) */}
               <TouchableOpacity
                 onPress={() => {
                   setShowSubMenu(false);
-                  navigation.navigate("HomePage");
+                  navigation.navigate("ChatbotPage");
                 }}
               >
-                <MaterialCommunityIcons name="robot" size={28} color="#2c6e49" />
+                <MaterialCommunityIcons
+                  name="robot"
+                  size={28}
+                  color="#2c6e49"
+                />
               </TouchableOpacity>
 
-              {/* Repair */}
               <TouchableOpacity
                 onPress={() => {
                   setShowSubMenu(false);
@@ -157,46 +201,95 @@ export default function BottomTabs() {
             </View>
           )}
 
-          <TouchableOpacity
-            style={styles.item}
-            onPress={() => handlePress("robot")}
-          >
+          <TouchableOpacity onPress={() => handlePress("robot")}>
             <MaterialCommunityIcons
               name="robot-outline"
-              size={28}
+              size={30}
               color={activeTab === "robot" ? "#2c6e49" : "black"}
             />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.divider} />
+        <Divider />
 
-        {/* 🔔 Notifications */}
+        {/* 🔔 Notifications (with badge) */}
         <TouchableOpacity
-          style={styles.item}
+          style={{ position: "relative" }}
           onPress={() => handlePress("notifications", "NotificationPage")}
         >
           <Ionicons
             name="notifications-outline"
-            size={24}
+            size={26}
             color={activeTab === "notifications" ? "#2c6e49" : "black"}
           />
+          {unreadCount > 0 && (
+            <View
+              style={{
+                position: "absolute",
+                right: -6,
+                top: -4,
+                backgroundColor: "#d9534f",
+                borderRadius: 10,
+                minWidth: 18,
+                height: 18,
+                justifyContent: "center",
+                alignItems: "center",
+                paddingHorizontal: 4,
+              }}
+            >
+              <Text
+                style={{
+                  color: "white",
+                  fontSize: 10,
+                  fontWeight: "bold",
+                }}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
 
-        <View style={styles.divider} />
+        <Divider />
 
-        {/* 👤 User */}
+        {/* 👤 Profile / Login */}
         <TouchableOpacity
-          style={styles.item}
-          onPress={() => handlePress("user", "LoginPage")}
+          onPress={() =>
+            handlePress("user", user ? "Settings" : "LoginPage")
+          }
         >
-          <Ionicons
-            name="person-circle-outline"
-            size={26}
-            color={activeTab === "user" ? "#2c6e49" : "black"}
-          />
+          {user && user.photoURL ? (
+            <Image
+              source={{ uri: user.photoURL }}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 16,
+                borderWidth: activeTab === "user" ? 2 : 0,
+                borderColor: "#2c6e49",
+              }}
+            />
+          ) : (
+            <Ionicons
+              name="person-circle-outline"
+              size={28}
+              color={activeTab === "user" ? "#2c6e49" : "black"}
+            />
+          )}
         </TouchableOpacity>
       </View>
     </>
   );
 }
+
+// 🔹 Divider Component
+const Divider = () => (
+  <View
+    style={{
+      height: 25,
+      width: 1,
+      backgroundColor: "#ccc",
+      marginHorizontal: 8,
+    }}
+  />
+);

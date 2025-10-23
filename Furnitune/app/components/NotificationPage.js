@@ -3,243 +3,302 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   FlatList,
-  Image,
+  TouchableOpacity,
   ActivityIndicator,
+  RefreshControl,
+  Image,
+  Alert,
 } from "react-native";
-import { onAuthStateChanged } from "firebase/auth";
-import { collection, getDocs, doc } from "firebase/firestore";
-import { auth, db } from "./firebaseConfig";
-import { useNavigation } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+import { getAuth } from "firebase/auth";
+import {
+  getFirestore,
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  updateDoc,
+  doc,
+} from "firebase/firestore";
+import { app } from "./firebaseConfig";
 
-export default function NotificationsScreen() {
-  const navigation = useNavigation();
-  const [filter, setFilter] = useState("ALL");
-  const [user, setUser] = useState(null);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+export default function NotificationPage({ navigation }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // ✅ Listen for login status
+  const user = auth.currentUser;
+
+  // ✅ Fetch notifications in real time
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        fetchNotifications(currentUser.uid);
-      } else {
-        setLoading(false);
-      }
-    });
-    return unsubscribe;
-  }, []);
+    if (!user) {
+      Alert.alert("Login Required", "Please log in to view notifications.");
+      navigation.navigate("LoginPage");
+      return;
+    }
 
-  // ✅ Fetch notifications from the user's subcollection
-  const fetchNotifications = async (userId) => {
-    try {
-      const userDocRef = doc(db, "users", userId);
-      const notificationsRef = collection(userDocRef, "notifications");
-      const querySnapshot = await getDocs(notificationsRef);
+    const q = query(
+      collection(db, "users", user.uid, "notifications"),
+      orderBy("createdAt", "desc")
+    );
 
-      const fetched = querySnapshot.docs.map((doc) => ({
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const notifData = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
-
-      // Sort newest first (optional)
-      fetched.sort(
-        (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-      );
-
-      setNotifications(fetched);
-    } catch (error) {
-      console.error("Error fetching notifications:", error);
-    } finally {
+      setNotifications(notifData);
       setLoading(false);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // ✅ Mark all as read
+  const markAllAsRead = async () => {
+    try {
+      for (const notif of notifications) {
+        if (!notif.read) {
+          const notifRef = doc(db, "users", user.uid, "notifications", notif.id);
+          await updateDoc(notifRef, { read: true });
+        }
+      }
+      Alert.alert("Success", "All notifications marked as read.");
+    } catch (error) {
+      console.error("🔥 Error marking all as read:", error);
     }
   };
 
-  // 🔍 Filter logic
-  const filteredData =
-    filter === "ALL" ? notifications : notifications.filter((n) => !n.read);
+  // ✅ Refresh list
+  const onRefresh = () => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 1000);
+  };
 
-  // 🖼 Render notification item
+  // ✅ Handle tap on a notification
+  const handlePress = async (item) => {
+    if (!item.read) {
+      const notifRef = doc(db, "users", user.uid, "notifications", item.id);
+      await updateDoc(notifRef, { read: true });
+    }
+
+    // Navigate to linked page
+    if (item.orderId) {
+      navigation.navigate("OrderSummary", { orderId: item.orderId });
+    }
+  };
+
+  // ✅ Render each notification
   const renderItem = ({ item }) => (
-    <View style={styles.notificationCard}>
-      <Image
-        source={{ uri: item.imageUrl || "https://via.placeholder.com/60" }}
-        style={styles.image}
-      />
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onPress={() => handlePress(item)}
+      style={[styles.card, !item.read && styles.unreadCard]}
+    >
+      {/* 🖼️ Image */}
+      {item.image ? (
+        <Image source={{ uri: item.image }} style={styles.productImage} />
+      ) : (
+        <View style={styles.iconContainer}>
+          <Ionicons
+            name="notifications-outline"
+            size={22}
+            color={item.read ? "#888" : "#2c6e49"}
+          />
+        </View>
+      )}
+
+      {/* 📄 Text Section */}
       <View style={{ flex: 1 }}>
-        <Text style={styles.title}>{item.title || "Notification"}</Text>
-        <Text style={styles.message}>{item.message || "No message."}</Text>
+        <Text style={styles.title}>{item.title}</Text>
+        <Text style={styles.body} numberOfLines={2}>
+          {item.body}
+        </Text>
+
+        {/* 🏷️ Status Badge */}
+        {item.status && (
+          <View style={[styles.statusBadge, getStatusStyle(item.status)]}>
+            <Text style={styles.statusText}>
+              {item.status.replace(/_/g, " ").toUpperCase()}
+            </Text>
+          </View>
+        )}
+
+        <Text style={styles.timestamp}>
+          {item.createdAt?.toDate
+            ? item.createdAt.toDate().toLocaleString()
+            : "Just now"}
+        </Text>
       </View>
-    </View>
+
+      {/* 🔵 Unread dot */}
+      {!item.read && <View style={styles.dot} />}
+    </TouchableOpacity>
   );
 
-  // 🕐 Loading indicator
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#2C6E49" />
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2c6e49" />
       </View>
     );
   }
 
-  // 🚪 If not logged in
-  if (!user) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.loginPrompt}>
-          PLEASE LOGIN TO VIEW YOUR NOTIFICATIONS.
-        </Text>
-        <TouchableOpacity onPress={() => navigation.navigate("LoginPage")}>
-          <Text style={styles.loginLink}>LOG IN</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  // ✅ Main notification list
   return (
     <View style={styles.container}>
-      <Text style={styles.pageTitle}>NOTIFICATIONS</Text>
-
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          style={[styles.tabButton, filter === "ALL" && styles.activeTab]}
-          onPress={() => setFilter("ALL")}
-        >
-          <Text
-            style={[styles.tabText, filter === "ALL" && styles.activeTabText]}
-          >
-            ALL
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabButton, filter === "UNREAD" && styles.activeTab]}
-          onPress={() => setFilter("UNREAD")}
-        >
-          <Text
-            style={[styles.tabText, filter === "UNREAD" && styles.activeTabText]}
-          >
-            UNREAD
-          </Text>
-        </TouchableOpacity>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Notifications</Text>
+        {notifications.length > 0 && (
+          <TouchableOpacity onPress={markAllAsRead}>
+            <Text style={styles.markAll}>Mark all as read</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      <FlatList
-        data={filteredData}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <Text style={{ textAlign: "center", color: "#555" }}>
-            No notifications found.
-          </Text>
-        }
-      />
-
-      <TouchableOpacity style={styles.seeMoreButton}>
-        <Text style={styles.seeMoreText}>SEE PREVIOUS NOTIFICATIONS</Text>
-      </TouchableOpacity>
+      {/* Empty state */}
+      {notifications.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="notifications-off-outline" size={50} color="#ccc" />
+          <Text style={styles.emptyText}>You have no notifications</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={notifications}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          contentContainerStyle={{ paddingBottom: 40 }}
+        />
+      )}
     </View>
   );
 }
 
+// 🎨 Dynamic color badge styles
+const getStatusStyle = (status) => {
+  switch (status) {
+    case "to_receive":
+      return { backgroundColor: "#eaf5ec" };
+    case "delivered":
+      return { backgroundColor: "#d4edda" };
+    case "cancelled":
+      return { backgroundColor: "#f8d7da" };
+    default:
+      return { backgroundColor: "#f1f1f1" };
+  }
+};
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F9F8F4",
+    backgroundColor: "#f9f8f4",
     paddingHorizontal: 16,
-    paddingTop: 30,
+    paddingTop: 55,
   },
-  pageTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    letterSpacing: 1,
-    color: "#000",
-    marginBottom: 10,
-  },
-  tabs: {
+  header: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
   },
-  tabButton: {
-    backgroundColor: "#E9E9E9",
-    paddingVertical: 5,
-    paddingHorizontal: 16,
-    borderRadius: 15,
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#2c6e49",
   },
-  activeTab: {
-    backgroundColor: "#2C6E49",
-  },
-  tabText: {
-    fontSize: 12,
+  markAll: {
+    fontSize: 13,
+    color: "#2c6e49",
     fontWeight: "600",
-    color: "#000",
   },
-  activeTabText: {
-    color: "#fff",
-  },
-  notificationCard: {
+  card: {
     flexDirection: "row",
     backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 12,
-    alignItems: "flex-start",
-    gap: 10,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+    alignItems: "center",
   },
-  image: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+  unreadCard: {
+    backgroundColor: "#eaf5ec",
+  },
+  productImage: {
+    width: 55,
+    height: 55,
+    borderRadius: 10,
+    marginRight: 12,
+  },
+  iconContainer: {
+    backgroundColor: "#eef6f1",
+    borderRadius: 10,
+    width: 45,
+    height: 45,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
   },
   title: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: "700",
-    color: "#000",
+    color: "#222",
+    marginBottom: 2,
   },
-  message: {
-    fontSize: 12,
-    color: "#444",
-    marginTop: 3,
-    lineHeight: 16,
+  body: {
+    fontSize: 13,
+    color: "#555",
+    lineHeight: 18,
   },
-  seeMoreButton: {
-    backgroundColor: "#2C6E49",
-    paddingVertical: 8,
-    borderRadius: 20,
-    alignItems: "center",
-    marginVertical: 10,
-  },
-  seeMoreText: {
+  timestamp: {
     fontSize: 11,
-    color: "#fff",
-    fontWeight: "600",
-    letterSpacing: 0.5,
+    color: "#999",
+    marginTop: 6,
   },
-  list: {
-    paddingBottom: 10,
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#2c6e49",
+    alignSelf: "center",
+    marginLeft: 8,
   },
-  center: {
+  statusBadge: {
+    alignSelf: "flex-start",
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    marginTop: 5,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#2c6e49",
+  },
+  loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F9F8F4",
   },
-  loginPrompt: {
+  emptyState: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 80,
+  },
+  emptyText: {
+    color: "#999",
     fontSize: 14,
-    color: "#333",
-    marginBottom: 6,
-  },
-  loginLink: {
-    color: "#4E6655",
-    textDecorationLine: "underline",
-    fontWeight: "600",
-    fontSize: 18,
+    marginTop: 8,
+    textAlign: "center",
   },
 });

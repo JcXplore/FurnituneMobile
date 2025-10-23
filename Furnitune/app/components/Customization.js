@@ -1,291 +1,556 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  Image,
   ScrollView,
   TouchableOpacity,
   TextInput,
+  Image,
   Alert,
-  Animated,
-  Easing,
+  ActivityIndicator,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
+import { getFirestore, collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { app } from "./firebaseConfig";
 
-export default function Customization({ route }) {
-  const { product, imageUrl } = route.params || {};
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  const [selectedFabric, setSelectedFabric] = useState(null);
+export default function Customization({ route, navigation }) {
+  const { product } = route.params || {};
+  const db = getFirestore(app);
+
+  const [availableColors, setAvailableColors] = useState([]);
+  const [availableSizes, setAvailableSizes] = useState([]);
+  const [additionals, setAdditionals] = useState([]);
+  const [selectedSize, setSelectedSize] = useState(null);
+  const [selectedColor, setSelectedColor] = useState(null);
+  const [selectedMaterial, setSelectedMaterial] = useState("Fabric");
+  const [selectedAddOns, setSelectedAddOns] = useState([]);
+  const [uploadedImage, setUploadedImage] = useState(null);
   const [notes, setNotes] = useState("");
-  const [showOptions, setShowOptions] = useState(false);
-  const slideAnim = useState(new Animated.Value(300))[0];
-  const [uploadedImage, setUploadedImage] = useState(null); // ✅ small image only
+  const [totalPrice, setTotalPrice] = useState(product?.price || 0);
+  const [loading, setLoading] = useState(true);
+  const [sizePrices, setSizePrices] = useState({});
+  const [availableMaterials, setAvailableMaterials] = useState([]);
+  const [qty, setQty] = useState(1);
+  const materials = ["Fabric", "Leather"];
 
-  const categories = [
-    "Living Room",
-    "Bedroom",
-    "Dining",
-    "Office",
-    "Outdoor",
-    "Decor",
-  ];
 
-  const fabrics = [
-    { id: 1, color: "#D9D9D9" },
-    { id: 2, color: "#A0522D" },
-    { id: 3, color: "#A9A9A9" },
-    { id: 4, color: "#2F4F4F" },
-  ];
+  useEffect(() => {
+    if (!product) return;
 
-  // Animate popup
-  const toggleOptions = () => {
-    if (showOptions) {
-      Animated.timing(slideAnim, {
-        toValue: 300,
-        duration: 250,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start(() => setShowOptions(false));
-    } else {
-      setShowOptions(true);
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 250,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-    }
+    const base = Number(product.basePrice || product.price || 0);
+    const sizePrice = selectedSize ? sizePrices[selectedSize] || base : base;
+    const extrasTotal = selectedAddOns.reduce((sum, a) => sum + (a.cents || 0), 0);
+    setTotalPrice((sizePrice + extrasTotal) * qty);
+  }, [selectedSize, sizePrices, selectedAddOns, qty]);
+
+  // 🎨 Map color names to valid hex values
+const colorToHex = (name) => {
+  if (!name) return "#ccc";
+  const map = {
+    black: "#000000",
+    white: "#FFFFFF",
+    beige: "#F5F5DC",
+    walnut: "#8B5A2B",
+    gray: "#808080",
+    grey: "#808080",
+    red: "#B71C1C",
+    brown: "#795548",
+    blue: "#1976D2",
+    green: "#388E3C",
+    oak: "#C4A484",
+    natural: "#E3CAA5",
+  };
+  const key = name.toLowerCase().trim();
+  return map[key] || "#D3D3D3"; // fallback neutral
+};
+
+
+  // 🧠 Normalize category
+  const normalizeCategory = (category) => {
+    const map = {
+      bed: "Beds",
+      sofa: "Sofas",
+      chair: "Chairs",
+      table: "Tables",
+      cabinet: "Cabinets",
+    };
+    return map[category?.toLowerCase()] || category;
   };
 
-  // Choose from gallery
-  const pickImage = async () => {
+  useEffect(() => {
+  async function loadSizePrices() {
+    try {
+      if (!product?.type && !product?.category) return;
+      const typeLabel = product.type || product.category;
+      const qRules = query(collection(db, "sizePriceRules"), where("type", "==", typeLabel));
+      const snapRules = await getDocs(qRules);
+
+      const priceMap = {};
+      snapRules.forEach((d) => {
+        const data = d.data();
+        const mode = (data.mode || "delta").toLowerCase();
+        const value = Number(data.value || 0);
+        const base = Number(product.basePrice || product.price || 0);
+        let price = base;
+
+        if (mode === "multiplier" || mode === "x" || mode === "mult") price = Math.round(base * value);
+        else if (mode === "absolute") price = value;
+        else price = base + value;
+
+        priceMap[data.size] = price;
+      });
+
+      setSizePrices(priceMap);
+    } catch (e) {
+      console.warn("⚠️ Error loading sizePriceRules:", e);
+    }
+  }
+
+  loadSizePrices();
+}, [product]);
+
+
+useEffect(() => {
+  if (!product) return;
+
+  const base = Number(product.basePrice || product.price || 0);
+  const sizePrice = selectedSize ? sizePrices[selectedSize] || base : base;
+
+  // include add-on costs
+  const extrasTotal = selectedAddOns.reduce((sum, a) => sum + (a.cents || 0), 0);
+  setTotalPrice(sizePrice + extrasTotal);
+}, [selectedSize, sizePrices, selectedAddOns]);
+
+
+
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const normalized = normalizeCategory(product?.category || "Bed");
+        const productsRef = collection(db, "products");
+        const q = query(productsRef, where("baseType", "==", normalized));
+        const querySnapshot = await getDocs(q);
+        
+
+        const colorSet = new Set();
+        const sizeSet = new Set();
+        const featureSet = new Set();
+
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+
+          // 🧩 --- Color Extraction ---
+          Object.keys(data).forEach((key) => {
+            if (key.toLowerCase().includes("color")) {
+              const value = data[key];
+              if (Array.isArray(value)) {
+                value.forEach((v) => {
+                  if (typeof v === "string") colorSet.add(v);
+                  else if (v?.name || v?.label || v?.id)
+                    colorSet.add(v.name || v.label || v.id);
+                });
+              }
+            }
+
+            // Nested color fields (options.colorOptions, etc.)
+            if (typeof data[key] === "object" && data[key] !== null) {
+              Object.entries(data[key]).forEach(([subKey, subVal]) => {
+                if (subKey.toLowerCase().includes("color") && Array.isArray(subVal)) {
+                  subVal.forEach((v) => {
+                    if (typeof v === "string") colorSet.add(v);
+                    else if (v?.name || v?.label || v?.id)
+                      colorSet.add(v.name || v.label || v.id);
+                  });
+                }
+              });
+            }
+          });
+
+          // 🧩 --- Size Extraction ---
+          if (Array.isArray(data.sizeOptions))
+            data.sizeOptions.forEach((s) =>
+              typeof s === "string" ? sizeSet.add(s) : sizeSet.add(s.label)
+            );
+          if (Array.isArray(data.availableSizes))
+            data.availableSizes.forEach((s) => sizeSet.add(s));
+          if (data.options?.sizes)
+            data.options.sizes.forEach((s) =>
+              typeof s === "string" ? sizeSet.add(s) : sizeSet.add(s.label)
+            );
+
+          // 🧩 --- Additional Features Extraction ---
+          Object.keys(data).forEach((key) => {
+            if (key.startsWith("has") && data[key] === true) {
+              // Convert "hasCover" → "With Cover"
+              const label =
+                "With " + key.replace("has", "").replace(/([A-Z])/g, " $1").trim();
+              featureSet.add(label);
+            }
+          });
+        });
+
+        // 🪑 Detect supported materials
+        let supportsFabric = false;
+        let supportsLeather = false;
+
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+
+          // 🔍 Check for materialOptions array
+          if (Array.isArray(data.materialOptions)) {
+            if (data.materialOptions.some((m) => /fabric/i.test(m))) supportsFabric = true;
+            if (data.materialOptions.some((m) => /leather/i.test(m))) supportsLeather = true;
+          }
+
+          // 🔍 Check for fields like hasFabric / hasLeather
+          if (data.hasFabric) supportsFabric = true;
+          if (data.hasLeather) supportsLeather = true;
+        });
+
+        // 🧠 Fallback — assume upholstered items have both
+        const category = normalized.toLowerCase();
+        if (["sofas", "chairs", "sectionals"].includes(category)) {
+          supportsFabric = true;
+          supportsLeather = true;
+        }
+
+        // ✅ Save detected materials
+        const detected = [
+          ...(supportsFabric ? ["Fabric"] : []),
+          ...(supportsLeather ? ["Leather"] : []),
+        ];
+        setAvailableMaterials(detected);
+
+
+
+        setAvailableColors([...colorSet]);
+        setAvailableSizes([...sizeSet]);
+
+        // 🧩 --- Try to get pricing details for those features ---
+        const addRef = doc(db, "additionals_pricing", normalized);
+        const addSnap = await getDoc(addRef);
+
+        let additionsList = [];
+        if (addSnap.exists()) {
+          additionsList = addSnap.data().items.map((item) => ({
+            key: item.key,
+            label: item.label,
+            cents: item.cents || 0,
+          }));
+        } else {
+          additionsList = [];
+        }
+
+        setAdditionals(additionsList);
+
+        setLoading(false);
+      } catch (err) {
+        console.error("Error fetching customization options:", err);
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [product]);
+
+
+  const toggleAddOn = (item) => {
+    let updated = [...selectedAddOns];
+    const exists = selectedAddOns.find((a) => a.key === item.key);
+
+    if (exists) updated = updated.filter((a) => a.key !== item.key);
+    else updated.push(item);
+
+    setSelectedAddOns(updated);
+    const extrasTotal = updated.reduce((sum, a) => sum + (a.cents || 0), 0);
+    setTotalPrice((product?.price || 0) + extrasTotal);
+  };
+
+  const handleImageUpload = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes:
-          ImagePicker.MediaType
-            ? [ImagePicker.MediaType.IMAGE]
-            : ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [4, 3],
         quality: 0.8,
       });
-
       if (!result.canceled && result.assets?.length > 0) {
-        setUploadedImage(result.assets[0].uri); // ✅ small image only
-        toggleOptions(); // close popup
+        setUploadedImage(result.assets[0].uri);
       }
-    } catch (err) {
-      console.error("pickImage error:", err);
-      Alert.alert("Error", "Could not pick image.");
+    } catch {
+      Alert.alert("Error", "Could not upload image.");
     }
   };
 
-  // Take photo
-  const takePhoto = async () => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert("Permission needed", "Camera access is required to take a photo.");
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes:
-          ImagePicker.MediaType
-            ? [ImagePicker.MediaType.IMAGE]
-            : ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets?.length > 0) {
-        setUploadedImage(result.assets[0].uri); // ✅ small image only
-        toggleOptions(); // close popup
-      }
-    } catch (err) {
-      console.error("takePhoto error:", err);
-      Alert.alert("Error", "Could not take photo.");
-    }
-  };
+  if (loading) {
+    return (
+      <View style={styles.loaderContainer}>
+        <ActivityIndicator size="large" color="#1B3D36" />
+        <Text>Loading customization options...</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.header}>FURNITURE CUSTOMIZATION</Text>
+    <View style={styles.pageContainer}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContainer}
+      >
+        <Text style={styles.header}>
+          CUSTOMIZE YOUR {product?.name?.toUpperCase()}
+        </Text>
 
-        {/* ✅ Preview Section — Main image never changes */}
-        <View style={styles.previewBox}>
+        <View style={styles.imageBox}>
           <Image
             source={
-              imageUrl
-                ? { uri: imageUrl }
-                : product?.image
+              product?.image
                 ? { uri: product.image }
                 : require("../assets/sofa.png")
             }
-            style={styles.furnitureImg}
+            style={styles.mainImage}
           />
-          <Text style={styles.productName}>
-            {product?.name || "Custom Furniture"}
+          <Text style={styles.productName}>{product?.name}</Text>
+          <Text style={styles.productPrice}>
+            ₱{product?.price?.toLocaleString()}
           </Text>
-          <Text style={{ textAlign: "center", color: "#666", marginBottom: 8 }}>
-            ₱{product?.price || "—"}
-          </Text>
-
         </View>
 
-        {/* Step 1: Choose Customization Category */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>1. Choose Customization Category</Text>
-          <View style={styles.typeGrid}>
-            {categories.map((cat, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={[
-                  styles.typeOption,
-                  selectedCategory === cat && styles.selectedType,
-                ]}
-                onPress={() => setSelectedCategory(cat)}
-              >
-                <Text
-                  style={[
-                    styles.typeLabel,
-                    selectedCategory === cat && styles.selectedTypeText,
-                  ]}
-                >
-                  {cat}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Step 2: Choose Fabric */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>2. Choose Fabric</Text>
-          <View style={styles.fabricGrid}>
-            {fabrics.map((fabric) => (
-              <TouchableOpacity
-                key={fabric.id}
-                style={[
-                  styles.fabricOption,
-                  { backgroundColor: fabric.color },
-                  selectedFabric === fabric.id && styles.selectedFabric,
-                ]}
-                onPress={() => setSelectedFabric(fabric.id)}
-              />
-            ))}
-          </View>
-        </View>
-
-        {/* Step 3: Add Notes or Preferences */}
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>3. Add Notes or Preferences</Text>
-
-            {/* Small Uploaded Image Preview */}
-            {uploadedImage && (
-              <View style={styles.imagePreviewContainer}>
-                <Image source={{ uri: uploadedImage }} style={styles.smallImage} />
+        {/* SIZE */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>1. CHOOSE SIZE</Text>
+          {availableSizes.length > 0 ? (
+            <View style={styles.optionRow}>
+              {availableSizes.map((size) => {
+              const price = sizePrices[size] || product.price || product.basePrice || 0;
+              return (
                 <TouchableOpacity
-                  style={styles.removeImgBtn}
-                  onPress={() => setUploadedImage(null)}
+                  key={size}
+                  style={[
+                    styles.optionBtn,
+                    selectedSize === size && styles.optionSelected,
+                  ]}
+                  onPress={() => setSelectedSize(size)}
                 >
-                  <Ionicons name="trash-outline" size={16} color="#fff" />
+                  <Text
+                    style={[
+                      styles.optionText,
+                      selectedSize === size && styles.optionTextSelected,
+                    ]}
+                  >
+                    {size}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
+                    ₱{price.toLocaleString()}
+                  </Text>
                 </TouchableOpacity>
-              </View>
-            )}
+              );
+            })}
 
-            {/* Notes Textbox */}
-            <TextInput
-              style={styles.notesBox}
-              placeholder="Add your notes or special requests..."
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-            />
 
-            {/* Upload / Take Photo Button */}
-            {!uploadedImage && (
-              <TouchableOpacity style={styles.uploadBtn} onPress={toggleOptions}>
-                <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-                <Text style={styles.uploadText}>Upload Photo</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        {/* Description Section */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>DESCRIPTION</Text>
-          <Text style={styles.paragraph}>
-            Share your customization ideas or inspirations by uploading a clear photo
-            and notes. We’ll review your submission and coordinate with you for
-            approval and custom adjustments.
-          </Text>
-
-          <Text style={styles.sectionTitle}>STEPS</Text>
-          <Text style={styles.paragraph}>1. Upload or take a photo of your customization piece.</Text>
-          <Text style={styles.paragraph}>2. Select your preferred fabric and style.</Text>
-          <Text style={styles.paragraph}>3. Add notes or special requests.</Text>
-          <Text style={styles.paragraph}>4. Submit your customization request.</Text>
+            </View>
+          ) : (
+            <Text style={{ color: "#777" }}>No sizes available.</Text>
+          )}
         </View>
 
-        {/* Submit Button */}
-        <TouchableOpacity style={styles.placeBtn}>
-          <Text style={styles.placeText}>Place Order</Text>
-        </TouchableOpacity>
-      </ScrollView>
+        <View style={styles.divider} />
 
-      {/* Upload Options Popup */}
-      {showOptions && (
-        <Animated.View
-          style={[
-            StyleSheet.absoluteFillObject,
-            { backgroundColor: "rgba(0,0,0,0.3)" },
-          ]}
-        >
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            activeOpacity={1}
-            onPress={toggleOptions}
-          />
+        {/* COLOR */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>2. CHOOSE COLOR</Text>
+          {availableColors.length > 0 ? (
+            <View style={styles.colorRow}>
+              {availableColors.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[
+                    styles.colorCircle,
+                    { backgroundColor: colorToHex(c) },
+                    selectedColor === c && styles.colorSelected,
+                  ]}
+                  onPress={() => setSelectedColor(c)}
+                >
+                  {/* optional color label preview */}
+                  {/* <Text style={styles.colorLabel}>{c}</Text> */}
+                </TouchableOpacity>
+              ))}
 
-          <Animated.View
-            style={[
-              styles.popup,
-              { transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            <View style={styles.popupInner}>
-              <Text style={styles.popupTitle}>Select Image Source</Text>
+            </View>
+          ) : (
+            <Text style={{ color: "#777" }}>No colors available.</Text>
+          )}
+        </View>
 
-              <TouchableOpacity style={styles.popupBtn} onPress={takePhoto}>
-                <Ionicons name="camera-outline" size={18} color="#1B3D36" />
-                <Text style={styles.popupText}>Take Photo</Text>
-              </TouchableOpacity>
+        <View style={styles.divider} />
 
-              <TouchableOpacity style={styles.popupBtn} onPress={pickImage}>
-                <Ionicons name="image-outline" size={18} color="#1B3D36" />
-                <Text style={styles.popupText}>Upload from Gallery</Text>
-              </TouchableOpacity>
+        {/* MATERIAL */}
+        {availableMaterials.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>3. CHOOSE MATERIAL</Text>
+            <View style={styles.optionRow}>
+              {availableMaterials.map((mat) => (
+                <TouchableOpacity
+                  key={mat}
+                  style={[
+                    styles.optionBtn,
+                    selectedMaterial === mat && styles.optionSelected,
+                  ]}
+                  onPress={() => setSelectedMaterial(mat)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      selectedMaterial === mat && styles.optionTextSelected,
+                    ]}
+                  >
+                    {mat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
-              <TouchableOpacity style={styles.cancelBtn} onPress={toggleOptions}>
-                <Text style={styles.cancelText}>Cancel</Text>
+
+
+        <View style={styles.divider} />
+
+        {/* ADDITIONALS */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>4. ADDITIONAL FEATURES</Text>
+          <View style={styles.optionRow}>
+            {additionals.length > 0 ? (
+              additionals.map((item) => {
+                const selected = selectedAddOns.some((a) => a.key === item.key);
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[
+                      styles.optionBtn,
+                      selected && styles.optionSelected,
+                    ]}
+                    onPress={() => toggleAddOn(item)}
+                  >
+                    <Text
+                      style={[
+                        styles.optionText,
+                        selected && styles.optionTextSelected,
+                      ]}
+                    >
+                      {item.label} — ₱{item.cents.toLocaleString()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              <Text style={{ color: "#777" }}>No additionals available.</Text>
+            )}
+          </View>
+
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* NOTES + UPLOAD */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>5. ADD NOTES / DESIGN PHOTO</Text>
+          {uploadedImage && (
+            <View style={styles.imagePreviewContainer}>
+              <Image source={{ uri: uploadedImage }} style={styles.smallImage} />
+              <TouchableOpacity
+                style={styles.removeImgBtn}
+                onPress={() => setUploadedImage(null)}
+              >
+                <Ionicons name="trash-outline" size={16} color="#fff" />
               </TouchableOpacity>
             </View>
-          </Animated.View>
-        </Animated.View>
-      )}
+          )}
+          <TextInput
+            style={styles.textBox}
+            placeholder="Write your notes or upload design..."
+            placeholderTextColor="#999"
+            multiline
+            value={notes}
+            onChangeText={setNotes}
+          />
+          {!uploadedImage && (
+            <TouchableOpacity style={styles.uploadBtn} onPress={handleImageUpload}>
+              <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+              <Text style={styles.uploadText}>Upload Design Photo</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </ScrollView>
+        {/* 🧮 Sticky Bottom Bar */}
+      <View style={styles.stickyBar}>
+        <View style={styles.totalRow}>
+        <Text style={styles.totalLabel}>TOTAL</Text>
+        <Text style={styles.totalValue}>₱{totalPrice.toLocaleString()}</Text>
+      </View>
+
+        <View style={styles.bottomControls}>
+          <View style={styles.qtyContainer}>
+            <TouchableOpacity
+              onPress={() => setQty(Math.max(qty - 1, 1))}
+              style={styles.qtyBtn}
+            >
+              <Ionicons name="remove" size={18} color="#333" />
+            </TouchableOpacity>
+            <Text style={styles.qtyText}>{qty}</Text>
+            <TouchableOpacity
+              onPress={() => setQty(qty + 1)}
+              style={styles.qtyBtn}
+            >
+              <Ionicons name="add" size={18} color="#333" />
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.buyNowBtn}
+            onPress={() => {
+              const customizedProduct = {
+                id: product?.id || "custom_" + Date.now(),
+                name: product?.name || "Custom Product",
+                category: product?.category || "Custom",
+                imageUrl: uploadedImage || product?.image || product?.images?.[0],
+                uploadedImage: uploadedImage || null, // ✅ added field
+                price: totalPrice,
+                qty,
+                selectedColor: selectedColor || "Default",
+                selectedSize: selectedSize || "Standard",
+                selectedMaterial: selectedMaterial || "Fabric",
+                additionals: selectedAddOns.map((item) => item.label),
+                notes,
+                type: "customization",
+                basePrice: product?.basePrice || product?.price,
+              };
+
+
+              navigation.navigate("CheckoutPage", { product: customizedProduct });
+            }}
+          >
+            <Text style={styles.buyNowText}>BUY NOW</Text>
+          </TouchableOpacity>
+
+
+
+        </View>
+      </View>
     </View>
   );
 }
 
+// 🎨 Styles
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#FAF6E9", padding: 16 },
+  loaderContainer: {
     flex: 1,
-    backgroundColor: "#FAF6E9",
-    padding: 16,
+    justifyContent: "center",
+    alignItems: "center",
   },
   header: {
     fontSize: 22,
@@ -293,21 +558,66 @@ const styles = StyleSheet.create({
     color: "#1B3D36",
     marginBottom: 16,
   },
-  previewBox: {
+  imageBox: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
+    alignItems: "center",
     shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-  furnitureImg: {
+  mainImage: {
     width: "100%",
     height: 200,
-    borderRadius: 8,
-    marginBottom: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  productName: { fontWeight: "700", fontSize: 18, color: "#1B3D36" },
+  productPrice: { fontSize: 16, color: "#666", marginBottom: 10 },
+  section: { marginBottom: 10 },
+  sectionTitle: {
+    fontWeight: "700",
+    fontSize: 15,
+    color: "#1B3D36",
+    marginBottom: 10,
+  },
+  divider: { height: 1, backgroundColor: "#ccc", marginVertical: 8 },
+  optionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  optionBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#1B3D36",
+    marginBottom: 8,
+  },
+  optionSelected: { backgroundColor: "#1B3D36" },
+  optionText: { color: "#1B3D36" },
+  optionTextSelected: { color: "#fff", fontWeight: "600" },
+  colorRow: { flexDirection: "row", gap: 10 },
+  colorCircle: {
+    width: 35,
+    height: 35,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: "#ccc",
+  },
+  colorSelected: { borderColor: "#1B3D36", borderWidth: 3 },
+  textBox: {
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    padding: 10,
+    height: 100,
+    textAlignVertical: "top",
   },
   uploadBtn: {
     flexDirection: "row",
@@ -316,186 +626,143 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     borderRadius: 8,
-    marginTop: 12,
+    marginTop: 10,
   },
-  uploadText: {
-    color: "#fff",
-    fontWeight: "600",
-    marginLeft: 8,
-  },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1B3D36",
-    marginBottom: 10,
-  },
-  typeGrid: {
+  uploadText: { color: "#fff", fontWeight: "600", marginLeft: 8 },
+  imagePreviewContainer: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+    position: "relative",
   },
-  typeOption: {
-    width: "48%",
-    height: 50,
+  smallImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    marginRight: 10,
     borderWidth: 1,
     borderColor: "#ccc",
+  },
+  removeImgBtn: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    backgroundColor: "#B22222",
+    padding: 4,
     borderRadius: 8,
+  },
+  totalText: {
+    fontSize: 18,
+    fontWeight: "bold",
+    textAlign: "center",
+    color: "#1B3D36",
+    marginVertical: 12,
+  },
+  submitBtn: {
+    flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 10,
-  },
-  selectedType: {
     backgroundColor: "#1B3D36",
-    borderColor: "#1B3D36",
-  },
-  typeLabel: {
-    color: "#333",
-  },
-  selectedTypeText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  fabricGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  fabricOption: {
-    width: "48%",
-    height: 60,
     borderRadius: 8,
-    marginBottom: 10,
-  },
-  selectedFabric: {
-    borderWidth: 3,
-    borderColor: "#1B3D36",
-  },
-  notesBox: {
-    height: 100,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
-    padding: 10,
-    backgroundColor: "#fff",
-    textAlignVertical: "top",
-  },
-  placeBtn: {
-    backgroundColor: "#1B3D36",
-    borderRadius: 10,
     paddingVertical: 12,
-    marginBottom: 40,
+    marginBottom: 30,
   },
-  placeText: {
-    color: "#fff",
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  popup: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "rgba(250, 246, 233, 0.98)",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    elevation: 10,
-  },
-  popupInner: {
-    alignItems: "center",
-  },
-  popupTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1B3D36",
-    marginBottom: 12,
-  },
-  popupBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#E5E5E5",
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginVertical: 5,
-    width: "100%",
-  },
-  popupText: {
-    fontSize: 14,
-    color: "#1B3D36",
-    marginLeft: 10,
-  },
-  cancelBtn: {
-    marginTop: 8,
-  },
-  cancelText: {
-    color: "#47695B",
-    fontWeight: "600",
-  },
-  paragraph: {
-    fontSize: 14,
-    color: "#444",
-    marginBottom: 6,
-    lineHeight: 20,
-  },
-  
-  productName: {
-  fontSize: 18,
-  fontWeight: "bold",
-  color: "#1B3D36",
-  marginTop: 8,
-  textAlign: "center",
+  submitText: { color: "#fff", fontWeight: "600", marginLeft: 8 },
+  stickyBar: {
+  position: "absolute",
+  bottom: 0,
+  left: 0,
+  right: 0,
+  backgroundColor: "#fff",
+  borderTopWidth: 1,
+  borderColor: "#ddd",
+  paddingVertical: 14,
+  paddingHorizontal: 20, // match content padding
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "center",
+  elevation: 12,
+  shadowColor: "#000",
+  shadowOpacity: 0.15,
+  shadowOffset: { width: 0, height: -3 },
+  shadowRadius: 4,
 },
-textboxContainer: {
-    position: "relative",
-    width: "100%",
-  },
 
-  textbox: {
-    backgroundColor: "#f0f0f0",
-    borderRadius: 10,
-    paddingLeft: 50, // space for small image
-    height: 45,
-  },
 
-  smallImage: {
-    width: 35,
-    height: 35,
-    borderRadius: 8,
-    position: "absolute",
-    left: 10,
-    top: 5,
-  },
-imagePreviewContainer: {
+totalRow: {
+  width: "100%",
+  flexDirection: "row",
+  justifyContent: "space-between", // 👈 ensures opposite corners
+  alignItems: "center",
+  paddingHorizontal: 4,
+  marginBottom: 8,
+},
+
+
+totalLabel: {
+  fontSize: 15,
+  fontWeight: "600",
+  color: "#333",
+},
+
+totalValue: {
+  fontSize: 22,
+  fontWeight: "700",
+  color: "#2c6e49",
+},
+
+
+bottomControls: {
   flexDirection: "row",
   alignItems: "center",
-  marginBottom: 10,
-  position: "relative",
+  justifyContent: "space-between",
+  gap: 10,
 },
-smallImage: {
-  width: 60,
-  height: 60,
-  borderRadius: 10,
-  marginRight: 10,
+
+qtyContainer: {
+  flexDirection: "row",
+  alignItems: "center",
   borderWidth: 1,
   borderColor: "#ccc",
-},
-removeImgBtn: {
-  position: "absolute",
-  right: 0,
-  top: 0,
-  backgroundColor: "#B22222",
-  padding: 4,
   borderRadius: 8,
+  paddingHorizontal: 8,
+  backgroundColor: "#f7f7f7",
 },
+
+qtyBtn: {
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+},
+
+qtyText: {
+  fontSize: 16,
+  fontWeight: "600",
+  marginHorizontal: 8,
+},
+
+buyNowBtn: {
+  flex: 1,
+  backgroundColor: "#2c6e49",
+  borderRadius: 10,
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: 12,
+},
+
+buyNowText: {
+  color: "#fff",
+  fontWeight: "700",
+  fontSize: 15,
+},
+pageContainer: {
+  flex: 1,
+  backgroundColor: "#FAF6E9",
+},
+
+scrollContainer: {
+  paddingHorizontal: 20, // Adds spacing on both sides
+  paddingTop: 10,        // Adds top breathing room
+  paddingBottom: 130,    // Prevents overlap with sticky bar
+},
+
 });

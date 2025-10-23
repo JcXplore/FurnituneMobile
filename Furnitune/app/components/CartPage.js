@@ -18,12 +18,12 @@ import {
   doc,
   deleteDoc,
 } from "firebase/firestore";
-import { app } from "./firebaseConfig"; // ✅ your Firebase config file
+import { app } from "./firebaseConfig";
 import { useNavigation } from "@react-navigation/native";
 
 export default function CartPage() {
-  const [selected, setSelected] = useState([]);
   const [cartItems, setCartItems] = useState([]);
+  const [selected, setSelected] = useState([]);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const navigation = useNavigation();
@@ -31,7 +31,6 @@ export default function CartPage() {
   const auth = getAuth(app);
   const db = getFirestore(app);
 
-  // ✅ Watch for user login state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -43,72 +42,101 @@ export default function CartPage() {
       }
       setLoading(false);
     });
-
     return unsubscribe;
   }, []);
 
-  // ✅ Fetch user’s cart from Firestore (subcollection: users/{uid}/cart)
   const fetchCartItems = async (uid) => {
     try {
       const cartRef = collection(db, "users", uid, "cart");
       const querySnapshot = await getDocs(cartRef);
       const items = [];
-      querySnapshot.forEach((doc) => {
-        items.push({ id: doc.id, ...doc.data() });
-      });
+      querySnapshot.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
       setCartItems(items);
     } catch (error) {
       console.error("Error fetching cart:", error);
     }
   };
 
-  // ✅ Toggle selected items
   const toggleSelect = (id) => {
     setSelected((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
 
-  // ✅ Delete item from Firestore (subcollection)
+  const toggleSelectAll = () => {
+    if (selected.length === cartItems.length) {
+      setSelected([]);
+    } else {
+      setSelected(cartItems.map((item) => item.id));
+    }
+  };
+
   const handleDelete = async (id) => {
     try {
       if (!user) return;
       const itemRef = doc(db, "users", user.uid, "cart", id);
       await deleteDoc(itemRef);
       setCartItems((prev) => prev.filter((item) => item.id !== id));
+      setSelected((prev) => prev.filter((itemId) => itemId !== id));
     } catch (error) {
       console.error("Error deleting item:", error);
     }
   };
 
+  const subtotal = cartItems
+    .filter((item) => selected.includes(item.id))
+    .reduce(
+      (sum, item) => sum + (item.price || 0) * (item.qty || 1),
+      0
+    );
+
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#4E6655" />
+        <ActivityIndicator size="large" color="#2c6e49" />
       </View>
     );
   }
 
-  // ✅ When user is not logged in
   if (!user) {
     return (
       <View style={styles.center}>
-        <Text style={styles.loginPrompt}>PLEASE LOGIN TO VIEW YOUR CART.</Text>
-        <TouchableOpacity onPress={() => navigation.navigate("LoginPage")}>
-          <Text style={styles.loginLink}>LOG IN</Text>
+        <Ionicons name="person-circle-outline" size={80} color="#ccc" />
+        <Text style={styles.loginPrompt}>Please login to view your cart</Text>
+        <TouchableOpacity
+          style={styles.loginButton}
+          onPress={() => navigation.navigate("LoginPage")}
+        >
+          <Text style={styles.loginButtonText}>LOGIN</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // ✅ When user is logged in
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>MY CART</Text>
+      {/* 🛒 Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>MY CART</Text>
+      </View>
 
+      {/* 📦 Select All */}
+      {cartItems.length > 0 && (
+        <View style={styles.selectAllContainer}>
+          <Checkbox
+            value={selected.length === cartItems.length && cartItems.length > 0}
+            onValueChange={toggleSelectAll}
+            color="#2c6e49"
+          />
+          <Text style={styles.selectAllText}>Select All</Text>
+        </View>
+      )}
+
+      {/* 🪑 Cart List */}
       {cartItems.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyText}>Your cart is empty.</Text>
+        <View style={styles.emptyState}>
+          <Ionicons name="cart-outline" size={70} color="#ccc" />
+          <Text style={styles.emptyText}>Your cart is empty</Text>
         </View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
@@ -117,42 +145,76 @@ export default function CartPage() {
               <Checkbox
                 value={selected.includes(item.id)}
                 onValueChange={() => toggleSelect(item.id)}
-                color={selected.includes(item.id) ? "#000" : undefined}
+                color={selected.includes(item.id) ? "#2c6e49" : undefined}
                 style={styles.checkbox}
               />
 
-              {item.imageUrl ? (
-                <Image source={{ uri: item.imageUrl }} style={styles.image} />
-              ) : (
-                <Image
-                  source={require("../assets/sofa.png")}
-                  style={styles.image}
-                />
-              )}
+              <Image
+                source={{
+                  uri:
+                    item.imageUrl ||
+                    "https://via.placeholder.com/80x80?text=No+Image",
+                }}
+                style={styles.image}
+              />
 
               <View style={styles.details}>
-                <Text style={styles.name}>{item.name}</Text>
-                <Text style={styles.qty}>Qty: {item.qty}</Text>
+                <Text style={styles.name} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.qty}>
+                  Qty: {item.qty}{" "}
+                  {item.selectedSize ? `• ${item.selectedSize}` : ""}
+                </Text>
+                {item.selectedColor && (
+                  <Text style={styles.color}>Color: {item.selectedColor}</Text>
+                )}
+                <Text style={styles.price}>₱{item.price?.toFixed(2)}</Text>
               </View>
-
-              <Text style={styles.price}>₱{item.price?.toFixed(2)}</Text>
 
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={() => handleDelete(item.id)}
               >
-                <Ionicons name="trash-outline" size={20} color="#000" />
+                <Ionicons name="trash-outline" size={22} color="#444" />
               </TouchableOpacity>
             </View>
           ))}
         </ScrollView>
       )}
 
-      {cartItems.length > 0 && (
-        <TouchableOpacity style={styles.checkoutButton}>
-          <Text style={styles.checkoutText}>CHECK OUT</Text>
+      {/* 💳 Bottom Checkout Bar */}
+      <View style={styles.footer}>
+        <View style={styles.totalWrap}>
+          <Text style={styles.totalLabel}>Subtotal:</Text>
+          <Text
+            style={[
+              styles.totalValue,
+              subtotal === 0 && { color: "#999" },
+            ]}
+          >
+            ₱{subtotal.toFixed(2)}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[
+            styles.checkoutButton,
+            subtotal === 0 && { backgroundColor: "#ccc" },
+          ]}
+          disabled={subtotal === 0}
+          onPress={() =>
+            navigation.navigate("OrderPage", {
+              selectedItems: cartItems.filter((item) =>
+                selected.includes(item.id)
+              ),
+            })
+          }
+        >
+          <Text style={styles.checkoutText}>
+            {subtotal === 0 ? "SELECT ITEMS" : "CHECK OUT"}
+          </Text>
         </TouchableOpacity>
-      )}
+      </View>
     </View>
   );
 }
@@ -160,33 +222,54 @@ export default function CartPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F6F3E7",
+    backgroundColor: "#f8f6f2",
     paddingHorizontal: 16,
-    paddingTop: 20,
   },
-  title: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#3E3E3E",
-    marginBottom: 12,
+  header: {
+    paddingVertical: 16,
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
+    marginBottom: 6,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#2c6e49",
+    letterSpacing: 1,
+  },
+  selectAllContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+    marginLeft: 6,
+  },
+  selectAllText: {
+    fontSize: 13,
+    color: "#333",
+    marginLeft: 8,
+    fontWeight: "500",
   },
   card: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#fff",
-    borderRadius: 10,
+    borderRadius: 16,
     padding: 10,
     marginBottom: 12,
     elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   checkbox: {
-    marginRight: 10,
+    marginRight: 8,
   },
   image: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    resizeMode: "contain",
+    width: 70,
+    height: 70,
+    borderRadius: 10,
+    backgroundColor: "#eee",
   },
   details: {
     flex: 1,
@@ -194,53 +277,95 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 2,
   },
   qty: {
     fontSize: 12,
-    color: "#666",
+    color: "#555",
+  },
+  color: {
+    fontSize: 12,
+    color: "#555",
   },
   price: {
     fontSize: 14,
-    fontWeight: "600",
-    marginRight: 8,
+    color: "#2c6e49",
+    fontWeight: "700",
+    marginTop: 4,
   },
   deleteButton: {
-    backgroundColor: "#EDEAE0",
+    backgroundColor: "#f2f0eb",
+    padding: 8,
     borderRadius: 8,
-    padding: 6,
+  },
+  footer: {
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    elevation: 15,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+  },
+  totalWrap: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  totalLabel: {
+    fontSize: 14,
+    color: "#444",
+  },
+  totalValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#2c6e49",
   },
   checkoutButton: {
-    backgroundColor: "#4E6655",
-    paddingVertical: 10,
-    borderRadius: 20,
+    backgroundColor: "#2c6e49",
+    borderRadius: 30,
+    paddingVertical: 14,
     alignItems: "center",
-    marginTop: 12,
-    marginBottom: 12,
   },
   checkoutText: {
     color: "#fff",
-    fontWeight: "bold",
+    fontWeight: "700",
     fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: "center",
+    marginTop: 120,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#666",
+    marginTop: 10,
+  },
+  loginPrompt: {
+    fontSize: 16,
+    color: "#333",
+    marginBottom: 10,
+  },
+  loginButton: {
+    backgroundColor: "#2c6e49",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 30,
+  },
+  loginButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    letterSpacing: 0.5,
   },
   center: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-  },
-  loginPrompt: {
-    fontSize: 16,
-    color: "#333",
-    marginBottom: 6,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: "#666",
-  },
-  loginLink: {
-    color: "#4E6655",
-    textDecorationLine: "underline",
-    fontWeight: "500",
-    fontSize: 18,
   },
 });

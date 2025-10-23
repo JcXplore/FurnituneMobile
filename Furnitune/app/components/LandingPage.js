@@ -31,7 +31,7 @@ const LandingPage = () => {
         name: "Customization", 
         desc: "Choose your furniture design, length, width, fabric, and more!", 
         image: require("../assets/settings.png"), 
-        route: "Customization" 
+        route: "CustomizationPage" 
       },
       { 
         name: "Repair", 

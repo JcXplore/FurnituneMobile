@@ -1,29 +1,34 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ImageBackground, Alert
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ImageBackground,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Checkbox from "expo-checkbox";
 import {
-  signInWithEmailAndPassword, GoogleAuthProvider, signInWithCredential
+  GoogleSignin,
+  statusCodes,
+} from "@react-native-google-signin/google-signin";
+
+// Firebase imports
+import {
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithCredential,
 } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebaseConfig";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
-import { makeRedirectUri } from "expo-auth-session";
-import Constants from "expo-constants";
-
-WebBrowser.maybeCompleteAuthSession();
-
-const IS_EXPO_GO = Constants.appOwnership === "expo";
-
-// 🔒 Hard-force Expo proxy redirect in dev
-// Make sure this exact URL is added in your Google Cloud Web OAuth client
-// (Authorized redirect URIs) AND in Firebase Auth → Authorized domains.
-const EXPO_REDIRECT = "https://auth.expo.io/@furnitune/Furnitune-Mobile";
+// ✅ Configure Google Sign-In
+GoogleSignin.configure({
+  webClientId:
+    "533053483607-issfugnm64h8blv9qcmub99cru2784ku.apps.googleusercontent.com",
+});
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState("");
@@ -32,101 +37,96 @@ export default function LoginScreen({ navigation }) {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Google Auth request — force proxy + fixed redirect
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    // Use your WEB OAuth client ID here
-    expoClientId:
-      "533053483607-issfugnm64h8blv9qcmub99cru2784ku.apps.googleusercontent.com",
-    androidClientId:
-      "533053483607-gap2cdujij5sp6au8tqhjbes6clrojgn.apps.googleusercontent.com",
-    // iosClientId: "<YOUR
-    // Disable native flow while debugging the proxy to avoid exp:// redirects
-    // androidClientId: "533053483607-gap2cdujij5sp6au8tqhjbes6clrojgn.apps.googleusercontent.com",
-
-    responseType: "id_token",
-    scopes: ["openid", "profile", "email"],
-    redirectUri: EXPO_REDIRECT, // ✅ fixed https://auth.expo.io/... URL
-  });
-
-  useEffect(() => {
-    console.log("Google redirectUri:", EXPO_REDIRECT);
-  }, []);
-
-  /* ---------------- Email/password ---------------- */
+  // ----------------- Email/Password Sign-in -----------------
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert("Error", "Please enter both email and password.");
+      Alert.alert("Please enter both email and password");
       return;
     }
-    setLoading(true);
+
     try {
-      const { user } = await signInWithEmailAndPassword(auth, email, password);
-      const ref = doc(db, "users", user.uid);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        await setDoc(ref, {
-          uid: user.uid,
-          name: user.displayName || "",
-          email: user.email || email,
-          photo: user.photoURL || "",
-          createdAt: new Date(),
-        });
-      }
-      navigation.replace("HomeScreen", {
-        userData: { uid: user.uid, email: user.email, ...(snap.data() || {}) },
-      });
-    } catch (e) {
-      console.error("Login Error:", e);
-      Alert.alert("Login Failed", e?.message ?? "Invalid email or password.");
+      setLoading(true);
+      await signInWithEmailAndPassword(auth, email, password);
+      Alert.alert("Login successful!");
+      navigation.navigate("Landing");
+    } catch (error) {
+      console.error("Login error:", error);
+      Alert.alert("Login failed", error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  /* ---------------- Google sign-in (Expo proxy) ---------------- */
-  const handleGoogleLogin = async () => {
+  // ----------------- Google Sign-In -----------------
+  const signIn = async () => {
     try {
-      // Force proxy here too
-      const res = await promptAsync({ useProxy: true, showInRecents: true });
+      await GoogleSignin.hasPlayServices();
 
-      if (res?.type !== "success") {
-        Alert.alert("Google Sign-in cancelled");
-        return;
+      // Let user select their Google account
+      await GoogleSignin.signIn();
+
+      // ✅ Get the ID token
+      const { idToken } = await GoogleSignin.getTokens();
+
+      if (!idToken) {
+        throw new Error("No ID token returned from Google Sign-In.");
       }
 
-      // Prefer id_token; fallback to access token if needed
-      const idToken = res.authentication?.idToken || res.params?.id_token;
-      const accessToken = res.authentication?.accessToken || res.params?.access_token;
+      // ✅ Create Firebase credential
+      const googleCredential = GoogleAuthProvider.credential(idToken);
 
-      if (!idToken && !accessToken) {
-        Alert.alert("Google Sign-in Error", "No token returned from Google.");
-        return;
+      // ✅ Sign in to Firebase with that credential
+      const userCredential = await signInWithCredential(auth, googleCredential);
+
+      // ✅ Get the logged-in user's data from Firebase
+      const currentUser = userCredential.user;
+
+      // ✅ Save user info in Firestore (first-time only)
+      if (currentUser) {
+        const userDocRef = doc(db, "users", currentUser.uid);
+        const docSnap = await getDoc(userDocRef);
+
+        if (!docSnap.exists()) {
+          await setDoc(userDocRef, {
+            name: currentUser.displayName || "Anonymous",
+            email: currentUser.email || "",
+            photo: currentUser.photoURL || "",
+            uid: currentUser.uid,
+          });
+        }
       }
+      navigation.navigate("Landing");
+    } catch (error) {
+      console.error("Google Sign-In Error:", error);
 
-      const cred = GoogleAuthProvider.credential(idToken || null, accessToken || null);
-      const { user } = await signInWithCredential(auth, cred);
-
-      const ref = doc(db, "users", user.uid);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        await setDoc(ref, {
-          uid: user.uid,
-          name: user.displayName || "",
-          email: user.email || "",
-          photo: user.photoURL || "",
-          createdAt: new Date(),
-        });
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        Alert.alert("Sign-In cancelled");
+      } else if (error.code === statusCodes.IN_PROGRESS) {
+        Alert.alert("Sign-In in progress");
+      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        Alert.alert("Play services not available");
+      } else {
+        Alert.alert("Sign-In Failed", error.message);
       }
+    }
+  };
 
-      navigation.replace("HomeScreen", { userData: { uid: user.uid, email: user.email } });
-    } catch (e) {
-      console.error("Google Sign-in Error:", e);
-      Alert.alert("Error", e?.message ?? "Failed to sign in with Google.");
+  // ----------------- Google Sign-Out -----------------
+  const signOut = async () => {
+    try {
+      await GoogleSignin.signOut();
+      Alert.alert("Signed out successfully");
+    } catch (error) {
+      console.error("Sign-Out Error:", error);
     }
   };
 
   return (
-    <ImageBackground source={require("../assets/loginbg.png")} style={styles.container} resizeMode="cover">
+    <ImageBackground
+      source={require("../assets/loginbg.png")}
+      style={styles.container}
+      resizeMode="cover"
+    >
       <View style={styles.overlay}>
         <Text style={styles.welcome}>WELCOME!</Text>
         <Text style={styles.title}>FURNITUNE</Text>
@@ -153,40 +153,69 @@ export default function LoginScreen({ navigation }) {
             value={password}
             onChangeText={setPassword}
           />
-          <TouchableOpacity onPress={() => setShowPassword((v) => !v)} style={styles.eyeIcon}>
-            <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={22} color="#666" />
+          <TouchableOpacity
+            onPress={() => setShowPassword((v) => !v)}
+            style={styles.eyeIcon}
+          >
+            <Ionicons
+              name={showPassword ? "eye-off-outline" : "eye-outline"}
+              size={22}
+              color="#666"
+            />
           </TouchableOpacity>
         </View>
 
         <View style={styles.rememberContainer}>
-          <Checkbox value={rememberMe} onValueChange={setRememberMe} color={rememberMe ? "#245c4f" : undefined} style={styles.checkbox} />
+          <Checkbox
+            value={rememberMe}
+            onValueChange={setRememberMe}
+            color={rememberMe ? "#245c4f" : undefined}
+            style={styles.checkbox}
+          />
           <Text style={styles.rememberText}>Remember Me</Text>
         </View>
 
-        <TouchableOpacity style={styles.loginBtn} onPress={handleLogin} disabled={loading}>
-          <Text style={styles.loginText}>{loading ? "Logging in..." : "LOG IN"}</Text>
+        <TouchableOpacity
+          style={styles.loginBtn}
+          onPress={handleLogin}
+          disabled={loading}
+        >
+          <Text style={styles.loginText}>
+            {loading ? "Logging in..." : "LOG IN"}
+          </Text>
         </TouchableOpacity>
 
         <View style={styles.socialRow}>
-          <TouchableOpacity style={[styles.socialIcon, !request && { opacity: 0.5 }]} onPress={handleGoogleLogin} disabled={!request}>
+          {/* ✅ Google Sign-In button */}
+          <TouchableOpacity style={styles.socialIcon} onPress={signIn}>
             <Ionicons name="logo-google" size={24} color="#DB4437" />
           </TouchableOpacity>
-          <View style={styles.socialIcon}><Ionicons name="logo-facebook" size={24} color="#3b5998" /></View>
-          <View style={styles.socialIcon}><Ionicons name="logo-apple" size={24} color="black" /></View>
+          <View style={styles.socialIcon}>
+            <Ionicons name="logo-facebook" size={24} color="#3b5998" />
+          </View>
+          <View style={styles.socialIcon}>
+            <Ionicons name="logo-apple" size={24} color="black" />
+          </View>
         </View>
 
         <TouchableOpacity onPress={() => navigation.navigate("SignupScreen")}>
-          <Text style={styles.signup}>Don’t have an account? <Text style={styles.signupLink}>Sign Up</Text></Text>
+          <Text style={styles.signup}>
+            Don’t have an account?{" "}
+            <Text style={styles.signupLink}>Sign Up</Text>
+          </Text>
         </TouchableOpacity>
 
-        {/* Helpful for debugging: shows the exact redirect being used */}
-        <Text style={{ marginTop: 12, fontSize: 12, color: "#666" }}>
-          Redirect: {EXPO_REDIRECT}
-        </Text>
+        {/* 👇 Browse Button (new) */}
+        <TouchableOpacity onPress={() => navigation.navigate("Landing")}>
+          <Text style={styles.browse}>
+            Just want to explore?{" "}
+            <Text style={styles.browseLink}>Browse</Text>
+          </Text>
+        </TouchableOpacity>
       </View>
     </ImageBackground>
   );
-};
+}
 
 /* ------------------ Styles ------------------ */
 const styles = StyleSheet.create({
@@ -290,6 +319,15 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   signupLink: {
+    fontWeight: "bold",
+    textDecorationLine: "underline",
+  },
+  browse: {
+    color: "#fff",
+    fontSize: 13,
+    marginTop: 10,
+  },
+  browseLink: {
     fontWeight: "bold",
     textDecorationLine: "underline",
   },

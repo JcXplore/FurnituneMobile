@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Furnitune Mobile",
-    "slug": "Furnitune-Mobile",
+    "slug": "FurnituneMobile",
     "scheme": "Furnitune-Mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,18 +12,19 @@
       "web"
     ],
     "assetBundlePatterns": [
-      "**/*"
+      "**/*", "assets/files/*.txt"
     ],
     "plugins": [
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-asset"
     ],
-    "android": {
-      "package": "com.furniture-mobile.furnitune"
-    },
     "extra": {
       "eas": {
         "projectId": "6c975ddb-734f-4a18-a26e-b4a1b5757fe7"
       }
+    },
+    "android": {
+      "package": "com.furnitune.FurnituneMobile"
     }
   }
 }

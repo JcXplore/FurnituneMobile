@@ -24,6 +24,10 @@ import SignupScreen from "./app/components/SignupScreen";
 import CartPage from "./app/components/CartPage";
 import NotificationPage from "./app/components/NotificationPage";
 import CustomizationPage from "./app/components/CustomizationPage";
+import CheckoutPage from "./app/components/CheckoutPage";
+import PaymentPage from "./app/components/PaymentPage";
+import ChatbotPage from "./app/components/ChatbotPage";
+import RecommenderPage from "./app/components/RecommenderPage";
 
 const Stack = createStackNavigator();
 
@@ -58,6 +62,22 @@ export default function App() {
             )}
           </Stack.Screen>
 
+          <Stack.Screen name="ChatbotPage">
+            {(props) => (
+              <LayoutWrapper>
+                <ChatbotPage {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
+          <Stack.Screen name="RecommenderPage">
+            {(props) => (
+              <LayoutWrapper>
+                <RecommenderPage {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
           <Stack.Screen name="ProductPage">
             {(props) => (
               <LayoutWrapper>
@@ -66,10 +86,26 @@ export default function App() {
             )}
           </Stack.Screen>
 
+          <Stack.Screen name="CheckoutPage">
+            {(props) => (
+              <LayoutWrapper>
+                <CheckoutPage {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
            <Stack.Screen name="CartPage">
             {(props) => (
               <LayoutWrapper>
                 <CartPage {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
+          <Stack.Screen name="PaymentPage">
+            {(props) => (
+              <LayoutWrapper>
+                <PaymentPage {...props} />
               </LayoutWrapper>
             )}
           </Stack.Screen>

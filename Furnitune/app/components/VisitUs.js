@@ -1,4 +1,3 @@
-// app/components/VisitUs.js
 import React from "react";
 import {
   View,
@@ -7,225 +6,277 @@ import {
   Image,
   ScrollView,
   TouchableOpacity,
+  Linking,
+  Alert,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 
 export default function VisitUs() {
+  const openGoogleMaps = () => {
+    const latitude = 15.3256;
+    const longitude = 120.6542;
+    const label = "Furnitune Showroom";
+    const url = `https://www.google.com/maps?q=${latitude},${longitude}(${encodeURIComponent(
+      label
+    )})`;
+
+    Linking.canOpenURL(url)
+      .then((supported) => {
+        if (supported) {
+          Linking.openURL(url);
+        } else {
+          Alert.alert("Error", "Google Maps not supported on this device");
+        }
+      })
+      .catch(() => Alert.alert("Error", "Unable to open Google Maps"));
+  };
+
   return (
     <ScrollView style={styles.container}>
-      {/* Header */}
-      <Text style={styles.subtitle}>PHILIPPINES</Text>
-      <Text style={styles.subtitle}>CONCEPCION, TARLAC</Text>
+      {/* Header Section */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Visit Our Showroom</Text>
+        <Text style={styles.headerSubtitle}>Concepcion, Tarlac • Philippines</Text>
+      </View>
 
-      <Text style={styles.paragraph}>
-        Welcome to Furnitune! Explore our showroom and see the latest furniture
-        designs crafted with quality and care. Our team is ready to help you
-        find the perfect fit for your space.
+      {/* Hero Image */}
+      <TouchableOpacity activeOpacity={0.9} onPress={openGoogleMaps}>
+        <Image
+          source={require("../assets/cpn.jpeg")}
+          style={styles.heroImage}
+        />
+        <View style={styles.mapOverlay}>
+          <Ionicons name="navigate-outline" size={20} color="#fff" />
+          <Text style={styles.mapOverlayText}>Open in Google Maps</Text>
+        </View>
+      </TouchableOpacity>
+
+      {/* Intro Text */}
+      <Text style={styles.introText}>
+        Discover high-quality furniture handcrafted with precision and designed
+        to bring warmth, comfort, and sophistication to your home. Visit
+        <Text style={styles.brand}> Furnitune </Text> today and experience the
+        beauty of true craftsmanship.
       </Text>
 
-      {/* Info box with icons */}
-      <View style={styles.infoBox}>
-        <View style={styles.infoRow}>
-          <Ionicons name="location-outline" size={18} color="#333" />
+      {/* Info Cards */}
+      <View style={styles.infoCard}>
+        <View style={styles.infoItem}>
+          <Ionicons name="location-outline" size={20} color="#2c6e49" />
           <Text style={styles.infoText}>
             Cristobal St., Brgy. San Jose, Concepcion, Tarlac
           </Text>
         </View>
-        <View style={styles.infoRow}>
-          <Ionicons name="call-outline" size={18} color="#333" />
+        <View style={styles.infoItem}>
+          <Ionicons name="call-outline" size={20} color="#2c6e49" />
           <Text style={styles.infoText}>+63 965 093 4957</Text>
         </View>
-        <View style={styles.infoRow}>
-          <Ionicons name="time-outline" size={18} color="#333" />
-          <Text style={styles.infoText}>Mon – Sat: 9:00 AM – 5:00 PM</Text>
+        <View style={styles.infoItem}>
+          <Ionicons name="time-outline" size={20} color="#2c6e49" />
+          <Text style={styles.infoText}>Mon – Sat • 9:00 AM – 5:00 PM</Text>
         </View>
-        <View style={styles.infoRow}>
-          <Ionicons name="mail-outline" size={18} color="#333" />
+        <View style={styles.infoItem}>
+          <Ionicons name="mail-outline" size={20} color="#2c6e49" />
           <Text style={styles.infoText}>furnitune12@gmail.com</Text>
         </View>
       </View>
 
-      <Text style={styles.paragraph}>
-        We aim to provide both comfort and style through our products. Visit us
-        today and experience quality furniture made just for you.
-      </Text>
-
-      {/* Map image */}
-      <Text style={styles.sectionTitle}>WELCOME TO FURNITUNE</Text>
-      <Image
-        style={styles.mapImage}
-        source={require("../assets/cpn.jpeg")}
-      />
-
-      {/* Footer */}
-      <Text style={styles.sectionTitle}>
-        EVERYTHING YOU NEED IS AT <Text style={styles.bold}>FURNITUNE!</Text>
-      </Text>
-
-      <View style={styles.footerCards}>
-        <View style={styles.card}>
-          <Image
-            source={require("../assets/des.jpg")}
-            style={styles.cardImage}
-          />
-          <Text style={styles.cardTitle}>Customize Your Piece!</Text>
-          <Text style={styles.cardText}>
-            Bring your vision to life, customize now.
-          </Text>
-          <TouchableOpacity style={styles.cardBtn}>
-            <Text style={styles.cardBtnText}>Learn More</Text>
-        </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          <Image
-             source={require("../assets/qual.jpg")}
-            style={styles.cardImage}
-          />
-          <Text style={styles.cardTitle}>Repair Your Furniture!</Text>
-          <Text style={styles.cardText}>
-            Give your furniture a second life.
-          </Text>
-          <TouchableOpacity style={styles.cardBtn}>
-            <Text style={styles.cardBtnText}>Learn More</Text>
-        </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          <Image
-             source={require("../assets/recs.jpg")}
-            style={styles.cardImage}
-          />
-          <Text style={styles.cardTitle}>Ask Furniture Suggestions!</Text>
-          <Text style={styles.cardText}>
-            Discover furniture that fits your style.
-          </Text>
-        <TouchableOpacity style={styles.cardBtn}>
-            <Text style={styles.cardBtnText}>Learn More</Text>
-        </TouchableOpacity>
-        </View>
+      {/* Features Section */}
+      <Text style={styles.sectionTitle}>What We Offer</Text>
+      <View style={styles.featuresContainer}>
+        {[
+          {
+            image: require("../assets/des.jpg"),
+            title: "Custom Designs",
+            desc: "Create furniture that matches your space and style perfectly.",
+          },
+          {
+            image: require("../assets/qual.jpg"),
+            title: "Repair Services",
+            desc: "Restore your favorite furniture pieces with expert care.",
+          },
+          {
+            image: require("../assets/recs.jpg"),
+            title: "AI Suggestions",
+            desc: "Get personalized furniture recommendations for your home.",
+          },
+        ].map((item, index) => (
+          <View key={index} style={styles.featureCard}>
+            <Image source={item.image} style={styles.featureImage} />
+            <Text style={styles.featureTitle}>{item.title}</Text>
+            <Text style={styles.featureDesc}>{item.desc}</Text>
+            <TouchableOpacity style={styles.learnBtn}>
+              <Text style={styles.learnBtnText}>Learn More</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
       </View>
-      <Text style={styles.cardsText}>
-            Don’t just take our word for it. Experience the quality today! So, what are you waiting for? Shop now!
-          </Text>
+
+      {/* Closing Text */}
+      <View style={styles.footer}>
+        <Text style={styles.footerTitle}>Experience Quality Living</Text>
+        <Text style={styles.footerText}>
+          Visit our showroom today and bring timeless elegance into your home.
+          Everything you need is at <Text style={styles.brand}>Furnitune!</Text>
+        </Text>
+      </View>
     </ScrollView>
   );
 }
 
+// ✅ Styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FAF9F6",
-    padding: 16,
+    backgroundColor: "#fafafa",
   },
- 
-  subtitle: {
-    fontSize: 16,
+  header: {
+    alignItems: "center",
+    paddingVertical: 24,
+    backgroundColor: "#1B3D36",
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    color: "#c9d8d3",
+    marginTop: 4,
+  },
+  heroImage: {
+    width: "92%",
+    height: 200,
+    borderRadius: 15,
+    alignSelf: "center",
+    marginVertical: 16,
+  },
+  mapOverlay: {
+    position: "absolute",
+    bottom: 18,
+    right: 28,
+    backgroundColor: "rgba(27, 61, 54, 0.9)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+  },
+  mapOverlayText: {
+    color: "#fff",
+    fontSize: 12,
     fontWeight: "600",
-    color: "#333",
+    marginLeft: 5,
   },
-  paragraph: {
+  introText: {
     fontSize: 14,
-    color: "#444",
-    marginVertical: 8,
-    lineHeight: 20,
+    color: "#333",
     textAlign: "center",
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    lineHeight: 20,
   },
-  infoBox: {
-    marginVertical: 10,
-    padding: 10,
+  brand: {
+    fontWeight: "700",
+    color: "#2c6e49",
+  },
+  infoCard: {
     backgroundColor: "#fff",
-    borderRadius: 8,
+    marginHorizontal: 20,
+    borderRadius: 12,
+    padding: 14,
     shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    marginBottom: 24,
   },
-  infoRow: {
+  infoItem: {
     flexDirection: "row",
     alignItems: "center",
-    marginVertical: 4,
+    marginVertical: 6,
   },
   infoText: {
+    marginLeft: 10,
     fontSize: 14,
-    color: "#333",
-    marginLeft: 8,
+    color: "#444",
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
     color: "#1B3D36",
     textAlign: "center",
-    marginVertical: 12,
+    marginBottom: 10,
   },
-  bold: {
-    fontWeight: "900",
-  },
-  mapImage: {
-    width: "100%",
-    height: 200,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  footerCards: {
+  featuresContainer: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-evenly",
     flexWrap: "wrap",
+    paddingHorizontal: 10,
+    marginBottom: 20,
   },
-  card: {
+  featureCard: {
     width: "30%",
-     backgroundColor: "#f2ede3",
+    backgroundColor: "#f3f2ee",
+    borderRadius: 10,
     padding: 10,
-    borderRadius: 8,
+    alignItems: "center",
+    marginVertical: 10,
     shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
     elevation: 2,
-    marginBottom: 12,
   },
-  cardBtn: {
-  marginTop: 8,
-  backgroundColor: "#1B3D36",
-  paddingVertical: 6,
-  paddingHorizontal: 12,
-  borderRadius: 6,
-  alignSelf: "center", // centers button inside card
-},
-cardBtnText: {
-  color: "#fff",
-  fontWeight: "600",
-  fontSize: 12,
-},
-  cardImage: {
+  featureImage: {
     width: "100%",
-    height: 70, 
-    borderRadius: 6,
-    marginBottom: 6,
-    resizeMode: "cover",
+    height: 80,
+    borderRadius: 8,
+    marginBottom: 8,
   },
-  cardTitle: {
+  featureTitle: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
     color: "#222",
     textAlign: "center",
   },
-  cardText: {
+  featureDesc: {
     fontSize: 12,
-    color: "#555",
-    marginTop: 2,
+    color: "#666",
     textAlign: "center",
+    marginVertical: 4,
   },
-  backBtn: {
+  learnBtn: {
     backgroundColor: "#1B3D36",
-    padding: 12,
-    borderRadius: 8,
-    alignSelf: "center",
-    marginTop: 20,
-    marginBottom: 40,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    marginTop: 4,
   },
-  backText: {
+  learnBtnText: {
     color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  footer: {
+    backgroundColor: "#1B3D36",
+    padding: 30,
+    borderTopLeftRadius: 25,
+    borderTopRightRadius: 25,
+    alignItems: "center",
+  },
+  footerTitle: {
+    color: "#fff",
+    fontSize: 18,
     fontWeight: "700",
-    fontSize: 14,
+    marginBottom: 6,
+  },
+  footerText: {
+    color: "#e8f2ee",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 18,
   },
 });

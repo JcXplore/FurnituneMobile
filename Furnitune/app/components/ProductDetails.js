@@ -20,46 +20,15 @@ import {
   collection,
   addDoc,
   serverTimestamp,
+  where, 
+  query,
+  getDocs,
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { db as exportedDb } from "./firebaseConfig";
 
-const db = exportedDb || getFirestore();
-const auth = getAuth();
-const storage = getStorage();
 
-// --- Utility: Normalize Firebase path ---
-const normalizePath = (path = "") => {
-  let result = path.trim();
-  result = result.replace(".firebasestorage.app", ".appspot.com");
-  result = result.replace(/([^:]\/)\/+/g, "$1");
-  return result;
-};
-
-// --- Utility: Convert gs:// to https:// ---
-const getImageUrl = async (path) => {
-  try {
-    if (!path) return null;
-    const normalized = normalizePath(path);
-    const cleanPath = normalized.replace(/^gs:\/\/[^/]+\//, "");
-
-    if (cleanPath.endsWith(".keep") || cleanPath === "") {
-      console.warn("⚠️ Skipping invalid file:", cleanPath);
-      return "https://via.placeholder.com/600x400?text=Image+Unavailable";
-    }
-
-    const storageRef = ref(storage, cleanPath);
-    const url = await getDownloadURL(storageRef);
-    return url;
-  } catch (error) {
-    console.warn("⚠️ Could not resolve storage URL:", path, error?.message);
-    return "https://via.placeholder.com/600x400?text=Image+Unavailable";
-  }
-};
-
-const FALLBACK_IMAGE =
-  "https://via.placeholder.com/600x400?text=No+Image+Available";
 
 export default function ProductDetailsScreen({ route, navigation }) {
   const incoming = route?.params?.product;
@@ -71,8 +40,46 @@ export default function ProductDetailsScreen({ route, navigation }) {
   const [selectedSize, setSelectedSize] = useState(null);
   const [note, setNote] = useState("");
   const [qty, setQty] = useState(1);
+  const [sizePrices, setSizePrices] = useState({});
+  const [totalPrice, setTotalPrice] = useState(0);
   const [adding, setAdding] = useState(false);
+  const db = exportedDb || getFirestore();
+  const auth = getAuth();
+  const storage = getStorage();
+  const FALLBACK_IMAGE =
+    "https://via.placeholder.com/600x400?text=No+Image+Available";
 
+// --- Utility: Normalize Firebase path ---
+  const normalizePath = (path = "") => {
+    let result = path.trim();
+    result = result.replace(".firebasestorage.app", ".appspot.com");
+    result = result.replace(/([^:]\/)\/+/g, "$1");
+    return result;
+  };
+
+  // --- Utility: Convert gs:// to https:// ---
+  const getImageUrl = async (path) => {
+    try {
+      if (!path) return null;
+      const normalized = normalizePath(path);
+      const cleanPath = normalized.replace(/^gs:\/\/[^/]+\//, "");
+
+      if (cleanPath.endsWith(".keep") || cleanPath === "") {
+        console.warn("⚠️ Skipping invalid file:", cleanPath);
+        return "https://via.placeholder.com/600x400?text=Image+Unavailable";
+      }
+
+      const storageRef = ref(storage, cleanPath);
+      const url = await getDownloadURL(storageRef);
+      return url;
+    } catch (error) {
+      console.warn("⚠️ Could not resolve storage URL:", path, error?.message);
+      return "https://via.placeholder.com/600x400?text=Image+Unavailable";
+    }
+  };
+
+
+  
   // 🔹 Resolve all product images (deduplicated)
   const resolveProductImages = async (prod) => {
     const candidateUris = [];
@@ -146,9 +153,13 @@ export default function ProductDetailsScreen({ route, navigation }) {
         setImages(resolvedImages);
         setMainImage(resolvedImages[0] || FALLBACK_IMAGE);
 
-        // 🚫 No auto-select color/size — user must choose
-        setSelectedColor(null);
+
+        // 🚫 No auto-selection — user must manually choose
         setSelectedSize(null);
+        setSelectedColor(null);
+
+
+
       } catch (err) {
         console.error("Error loading product:", err);
         Alert.alert("Error", "Could not load product details.");
@@ -160,6 +171,55 @@ export default function ProductDetailsScreen({ route, navigation }) {
     loadProduct();
     return () => (mounted = false);
   }, [incoming]);
+
+  useEffect(() => {
+    async function loadSizePrices() {
+      try {
+        if (!product?.type && !product?.category) return;
+        const typeLabel = product.type || product.category;
+        const qRules = query(collection(db, "sizePriceRules"), where("type", "==", typeLabel));
+        const snapRules = await getDocs(qRules);
+
+        const priceMap = {};
+        snapRules.forEach((d) => {
+          const data = d.data();
+          const mode = (data.mode || "delta").toLowerCase();
+          const value = Number(data.value || 0);
+          const base = Number(product.basePrice || product.price || 0);
+          let price = base;
+
+          if (mode === "multiplier" || mode === "x" || mode === "mult")
+            price = Math.round(base * value);
+          else if (mode === "absolute")
+            price = value;
+          else
+            price = base + value;
+
+          priceMap[data.size] = price;
+        });
+
+        setSizePrices(priceMap);
+      } catch (e) {
+        console.warn("Error loading sizePriceRules:", e);
+      }
+    }
+
+    loadSizePrices();
+    }, [product]);
+
+    useEffect(() => {
+      if (!product) return;
+
+      const base = Number(product.basePrice || product.price || 0);
+      const sizePrice = selectedSize ? sizePrices[selectedSize] || base : base;
+      const total = sizePrice * qty;
+
+      setTotalPrice(total);
+    }, [product, selectedSize, sizePrices, qty]);
+
+
+
+
 
   // 🔹 When color or size changes → update mainImage
   useEffect(() => {
@@ -204,6 +264,10 @@ export default function ProductDetailsScreen({ route, navigation }) {
       }
 
       setAdding(true);
+
+      const userRef = doc(db, "users", auth.currentUser.uid);
+      const cartRef = collection(userRef, "cart"); // ✅ correct user-scoped subcollection
+
       const price = product.price ?? product.basePrice ?? 0;
       const entry = {
         userId: auth.currentUser.uid,
@@ -218,7 +282,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
         createdAt: serverTimestamp(),
       };
 
-      await addDoc(collection(db, "cart"), entry);
+      await addDoc(cartRef, entry); // ✅ saves to /users/{uid}/cart
       Alert.alert("Added", "Item added to cart.");
     } catch (err) {
       console.error("Add to cart error:", err);
@@ -227,6 +291,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
       setAdding(false);
     }
   };
+
 
   if (loading)
     return (
@@ -249,7 +314,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 150 }}
       >
         <Text style={styles.brand}>FURNITUNE</Text>
 
@@ -301,6 +366,8 @@ export default function ProductDetailsScreen({ route, navigation }) {
             <View style={styles.optionRow}>
               {product.sizes.map((s, i) => {
                 const label = s.label ?? s.id;
+                const price = sizePrices[label] || product.price || product.basePrice;
+
                 return (
                   <TouchableOpacity
                     key={i}
@@ -311,6 +378,9 @@ export default function ProductDetailsScreen({ route, navigation }) {
                     onPress={() => setSelectedSize(label)}
                   >
                     <Text style={styles.sizeText}>{label}</Text>
+                    <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
+                      ₱{price.toLocaleString()}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
@@ -368,86 +438,97 @@ export default function ProductDetailsScreen({ route, navigation }) {
         )}
       </ScrollView>
 
-      {/* 🔸 Sticky Bottom Bar */}
       
+      {/* 🔹 Sticky Bottom Bar */}
       <View style={styles.stickyBar}>
-        {/* Quantity Selector */}
-        <View style={styles.qtyBox}>
-          <TouchableOpacity onPress={decrement} style={styles.qtyBtn}>
-            <Ionicons name="remove" size={20} color="#333" />
-          </TouchableOpacity>
-          <Text style={styles.qtyText}>{qty}</Text>
-          <TouchableOpacity onPress={increment} style={styles.qtyBtn}>
-            <Ionicons name="add" size={20} color="#333" />
-          </TouchableOpacity>
+        {/* 🧮 TOTAL PRICE */}
+        <View style={styles.totalContainer}>
+          <Text style={styles.totalLabel}>TOTAL</Text>
+          <Text style={styles.totalValueRight}>₱{totalPrice.toLocaleString()}</Text>
         </View>
 
-        {/* Add to Cart (icon only) */}
-        <TouchableOpacity
-          style={styles.iconBtn}
-          onPress={addToCart}
-          disabled={adding}
-        >
-          <Ionicons name="cart-outline" size={22} color="#fff" />
-        </TouchableOpacity>
+        {/* 🧱 BUTTONS ROW */}
+        <View style={styles.buttonsRow}>
+          {/* Quantity Selector */}
+          <View style={styles.qtyBox}>
+            <TouchableOpacity onPress={decrement} style={styles.qtyBtn}>
+              <Ionicons name="remove" size={20} color="#333" />
+            </TouchableOpacity>
+            <Text style={styles.qtyText}>{qty}</Text>
+            <TouchableOpacity onPress={increment} style={styles.qtyBtn}>
+              <Ionicons name="add" size={20} color="#333" />
+            </TouchableOpacity>
+          </View>
 
-        {/* Customize Button */}
-        <TouchableOpacity
-          style={[styles.addBtn, { flex: 1, backgroundColor: "#1b4332" }]}
-          onPress={() =>
-            navigation.navigate("Customization", {
-              product: {
-                id: product.id,
-                name: product.name,
-                imageUrl: mainImage, // 👈 main image passed properly
-                price: product.price ?? product.basePrice ?? 0,
-                selectedColor,
-                selectedSize,
-              },
-              imageUrl: mainImage, // 👈 also pass separately for consistency
-            })
-          }
-        >
-          <Text style={styles.addBtnText}>CUSTOMIZE</Text>
-        </TouchableOpacity>
+          {/* Add to Cart */}
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={addToCart}
+            disabled={adding}
+          >
+            <Ionicons name="cart-outline" size={22} color="#fff" />
+          </TouchableOpacity>
 
-        {/* Buy Now Button */}
-        <TouchableOpacity
-          style={[styles.addBtn, { flex: 1, backgroundColor: "#2c6e49" }]}
-          onPress={() => {
-            if (!auth.currentUser) {
-              Alert.alert("Login required", "Please log in to continue.", [
-                { text: "Cancel", style: "cancel" },
-                { text: "Login", onPress: () => navigation.navigate("LoginPage") },
-              ]);
-              return;
-            }
-            if (product.colors?.length && !selectedColor) {
-              Alert.alert("Choose color", "Please select a color option.");
-              return;
-            }
-            if (product.sizes?.length && !selectedSize) {
-              Alert.alert("Choose size", "Please select a size option.");
-              return;
-            }
-
-            navigation.navigate("OrderPage", {
-              product: {
-                id: product.id,
-                name: product.name,
+          {/* Customize */}
+          <TouchableOpacity
+            style={[styles.addBtn, { flex: 1, backgroundColor: "#1b4332" }]}
+            onPress={() =>
+              navigation.navigate("Customization", {
+                product: {
+                  id: product.id,
+                  name: product.name,
+                  imageUrl: mainImage,
+                  price: product.price ?? product.basePrice ?? 0,
+                  selectedColor,
+                  selectedSize,
+                },
                 imageUrl: mainImage,
-                price: product.price ?? product.basePrice ?? 0,
-                selectedColor,
-                selectedSize,
-                qty,
-                note,
-              },
-            });
-          }}
-        >
-          <Text style={styles.addBtnText}>BUY NOW</Text>
-        </TouchableOpacity>
+              })
+            }
+          >
+            <Text style={styles.addBtnText}>CUSTOMIZE</Text>
+          </TouchableOpacity>
+
+          {/* Buy Now */}
+          <TouchableOpacity
+            style={[styles.addBtn, { flex: 1, backgroundColor: "#2c6e49" }]}
+            onPress={() => {
+              if (!auth.currentUser) {
+                Alert.alert("Login required", "Please log in to continue.", [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Login", onPress: () => navigation.navigate("LoginPage") },
+                ]);
+                return;
+              }
+
+              if (product.colors?.length && !selectedColor) {
+                Alert.alert("Choose color", "Please select a color option.");
+                return;
+              }
+              if (product.sizes?.length && !selectedSize) {
+                Alert.alert("Choose size", "Please select a size option.");
+                return;
+              }
+
+              navigation.navigate("CheckoutPage", {
+                product: {
+                  id: product.id,
+                  name: product.name,
+                  imageUrl: mainImage,
+                  price: product.price ?? product.basePrice ?? 0,
+                  selectedColor,
+                  selectedSize,
+                  qty,
+                  note,
+                },
+              });
+            }}
+          >
+            <Text style={styles.addBtnText}>BUY NOW</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
 
 </View>
   );
@@ -534,14 +615,52 @@ const styles = StyleSheet.create({
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
   centerWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
   stickyBar: {
-    position: "absolute",
-    bottom: 12,
-    left: 12,
-    right: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
+  position: "absolute",
+  bottom: 12,
+  left: 12,
+  right: 12,
+  backgroundColor: "#fff",
+  borderRadius: 12,
+  paddingVertical: 10,
+  paddingHorizontal: 12,
+  elevation: 8,
+  shadowColor: "#000",
+  shadowOpacity: 0.2,
+  shadowOffset: { width: 0, height: 2 },
+  shadowRadius: 4,
+},
+totalContainer: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between", // ✅ pushes label left, value right
+  width: "100%",
+  marginBottom: 8,
+},
+
+totalLabel: {
+  fontSize: 14,
+  fontWeight: "600",
+  color: "#444",
+},
+
+totalValueRight: {
+  fontSize: 20,
+  fontWeight: "bold",
+  color: "#2c6e49",
+},
+
+totalValue: {
+  fontSize: 20,
+  fontWeight: "bold",
+  color: "#2c6e49",
+},
+
+buttonsRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+},
   qtyBox: {
     backgroundColor: "#fff",
     paddingHorizontal: 8,

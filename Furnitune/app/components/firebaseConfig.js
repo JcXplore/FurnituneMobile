@@ -4,16 +4,16 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { initializeAuth, getReactNativePersistence } from "firebase/auth";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
+import { API_KEY, AUTH_DOMAIN, PROJECT_ID, STORAGE_BUCKET, MESSAGING_SENDER_ID, APP_ID, MEASUREMENT_ID } from '@env';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCYHjH1hIdCFyyOgCzjwxMf3KsZ0yXtHSM",
-  authDomain: "furnitune-64458.firebaseapp.com",
-  projectId: "furnitune-64458",
-  storageBucket: "furnitune-64458.firebasestorage.app", // 👈 correct storage bucket
-  messagingSenderId: "533053483607",
-  appId: "1:533053483607:android:62a257e92b74db878a1112",
-  measurementId: "G-GE7DYZWPW7",
-  
+  apiKey: API_KEY,
+  authDomain: AUTH_DOMAIN,
+  projectId: PROJECT_ID,
+  storageBucket: STORAGE_BUCKET,
+  messagingSenderId: MESSAGING_SENDER_ID,
+  appId: APP_ID,
+  measurementId: MEASUREMENT_ID,
 };
 
 // Initialize Firebase only once
