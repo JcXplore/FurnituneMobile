@@ -13,8 +13,8 @@ import Ionicons from "react-native-vector-icons/Ionicons";
 
 export default function VisitUs() {
   const openGoogleMaps = () => {
-    const latitude = 15.3256;
-    const longitude = 120.6542;
+    const latitude = 15.3266219;
+    const longitude = 120.6616784;
     const label = "Furnitune Showroom";
     const url = `https://www.google.com/maps?q=${latitude},${longitude}(${encodeURIComponent(
       label

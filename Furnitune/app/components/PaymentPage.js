@@ -69,6 +69,7 @@ export default function PaymentPage({ route, navigation }) {
     try {
       setUploading(true);
 
+      // 🔹 Upload payment proof to Firebase Storage
       const filename = `userPayments/${user.uid}/${Date.now()}_proof.jpg`;
       const storageRef = ref(storage, filename);
 
@@ -77,36 +78,59 @@ export default function PaymentPage({ route, navigation }) {
       await uploadBytes(storageRef, bytes, { contentType: "image/jpeg" });
       const downloadURL = await getDownloadURL(storageRef);
 
+      // 🔹 Detect order type
       const orderType =
         order?.items?.[0]?.type ||
         order?.type ||
         order?.product?.type ||
         "standard";
 
-      const collectionName =
-        orderType === "customization" ? "custom_orders" : "orders";
+      // 🔹 Choose Firestore collection based on order type
+      let collectionName = "orders";
+      if (orderType === "customization") collectionName = "custom_orders";
+      else if (orderType === "repair") collectionName = "repairs";
 
-      await addDoc(collection(db, collectionName), {
+      // 🔹 Construct order data
+      const orderData = {
         ...order,
         userId: user.uid,
         contactEmail: order.contactEmail || user.email,
-        paymentStatus: "pending",
+        paymentStatus: "paid",
         paymentProofUrl: downloadURL,
         createdAt: serverTimestamp(),
-      });
+        status: "processing",
+        type: orderType,
+      };
+
+      // 🔹 Save to Firestore
+      const newOrderRef = await addDoc(collection(db, collectionName), orderData);
+
+      console.log(`✅ ${orderType.toUpperCase()} order saved:`, newOrderRef.id);
 
       Alert.alert(
         "Payment Submitted",
-        `Your order has been submitted to ${collectionName.replace("_", " ")}.`,
-        [{ text: "OK", onPress: () => navigation.navigate("MyPurchases") }]
+        "Your payment has been uploaded successfully and your order is now being processed.",
+        [
+          {
+            text: "OK",
+            onPress: () =>
+              navigation.replace("OrderSummary", {
+                orderId: newOrderRef.id,
+                source: "orders",
+                fromPayment: true, // ✅ mark that we came from payment
+              }),
+          },
+        ]
       );
+
     } catch (error) {
-      console.error("Upload error:", error);
+      console.error("🔥 Upload error:", error);
       Alert.alert("Error", "Upload failed. Please try again.");
     } finally {
       setUploading(false);
     }
   };
+
 
   return (
     <ScrollView

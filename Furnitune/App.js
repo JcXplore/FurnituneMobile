@@ -28,6 +28,10 @@ import CheckoutPage from "./app/components/CheckoutPage";
 import PaymentPage from "./app/components/PaymentPage";
 import ChatbotPage from "./app/components/ChatbotPage";
 import RecommenderPage from "./app/components/RecommenderPage";
+import OrderPage from "./app/components/OrderPage";
+import SplashScreen from "./app/components/SplashScreen";
+import ForgotPassword from "./app/components/ForgotPassword";
+import EmailVerification from "./app/components/EmailVerification";
 
 const Stack = createStackNavigator();
 
@@ -36,7 +40,7 @@ function LayoutWrapper({ children }) {
   const route = useRoute();
 
   // Screens where we want to hide nav bars
-  const hiddenScreens = ["LoginPage"];
+  const hiddenScreens = ["LoginPage", "ForgotPassword"];
 
   const shouldHide = hiddenScreens.includes(route.name);
 
@@ -53,7 +57,10 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Navigator screenOptions={{ headerShown: false }}  initialRouteName="SplashScreen">
+
+          <Stack.Screen name="SplashScreen" component={SplashScreen} />
+
           <Stack.Screen name="Landing">
             {(props) => (
               <LayoutWrapper>
@@ -62,10 +69,20 @@ export default function App() {
             )}
           </Stack.Screen>
 
+          
+
           <Stack.Screen name="ChatbotPage">
             {(props) => (
               <LayoutWrapper>
                 <ChatbotPage {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
+          <Stack.Screen name="OrderPage">
+            {(props) => (
+              <LayoutWrapper>
+                <OrderPage {...props} />
               </LayoutWrapper>
             )}
           </Stack.Screen>
@@ -216,9 +233,11 @@ export default function App() {
 
           {/* 👇 Login won't render MenuBar or BottomTabs */}
           <Stack.Screen name="LoginPage" component={LoginPage} />
+          <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
           <Stack.Screen name="SignupScreen" component={SignupScreen} />
+          <Stack.Screen name="EmailVerification" component={EmailVerification} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
   );
-} 
+}

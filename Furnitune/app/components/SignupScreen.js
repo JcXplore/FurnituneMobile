@@ -8,6 +8,10 @@ import {
   ImageBackground,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { auth, db } from "./firebaseConfig";
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+import { setDoc, doc } from "firebase/firestore";
+
 
 export default function SignupScreen({ navigation }) {
   const [firstName, setFirstName] = useState("");
@@ -18,20 +22,37 @@ export default function SignupScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const handleSignup = () => {
-    if (!firstName || !lastName || !email || !password || !confirmPassword) {
-      alert("Please fill in all fields.");
-      return;
-    }
-    if (password !== confirmPassword) {
-      alert("Passwords do not match.");
-      return;
-    }
+  const handleSignup = async () => {
+  if (!firstName || !lastName || !email || !password || !confirmPassword) {
+    alert("Please fill in all fields.");
+    return;
+  }
+  if (password !== confirmPassword) {
+    alert("Passwords do not match.");
+    return;
+  }
 
-    // Firebase Auth + Firestore logic will go here later
-    alert("Account created successfully!");
-    navigation.replace("HomeScreen"); 
-  };
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    await sendEmailVerification(user); // ✅ Sends clickable verification link
+
+    await setDoc(doc(db, "users", user.uid), {
+      name: `${firstName} ${lastName}`,
+      email,
+      uid: user.uid,
+      verified: false,
+    });
+
+    alert("Verification email sent! Please check your inbox.");
+    navigation.replace("EmailVerification");
+  } catch (error) {
+    alert(error.message);
+    console.error(error);
+  }
+};
+
 
   return (
     <ImageBackground
@@ -122,7 +143,7 @@ export default function SignupScreen({ navigation }) {
         </TouchableOpacity>
 
         {/* Already have an account */}
-        <TouchableOpacity onPress={() => navigation.navigate("LoginScreen")}>
+        <TouchableOpacity onPress={() => navigation.navigate("")}>
           <Text style={styles.loginText}>
             Already have an account? <Text style={styles.loginLink}>Log In</Text>
           </Text>

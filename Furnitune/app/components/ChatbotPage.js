@@ -87,7 +87,7 @@ export default function ChatbotPage() {
       const response = await axios.post(
         OPENROUTER_BASE_URL,
         {
-          model: "google/gemma-2-9b-it",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",

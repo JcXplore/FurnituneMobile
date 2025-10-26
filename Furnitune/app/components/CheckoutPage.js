@@ -142,6 +142,16 @@ export default function CheckoutPage({ route, navigation }) {
           />
           <View style={{ flex: 1 }}>
             <Text style={styles.productName}>{product?.name || "Unnamed Product"}</Text>
+            {product?.type === "repair" && (
+            <>
+              <Text style={styles.productOption}>Type: {product?.name}</Text>
+              <Text style={styles.productOption}>Cover: {product?.selectedColor}</Text>
+              <Text style={styles.productOption}>Frame: {product?.selectedMaterial}</Text>
+              {product?.notes ? (
+                <Text style={styles.productOption}>Notes: {product.notes}</Text>
+              ) : null}
+            </>
+          )}
 
             {product?.type === "customization" && product?.uploadedImage && (
               <Text style={{ fontSize: 12, color: "#2c6e49", fontStyle: "italic" }}>

@@ -3,421 +3,379 @@ import {
   View,
   Text,
   StyleSheet,
-  Image,
   ScrollView,
   TouchableOpacity,
   TextInput,
+  Image,
   Alert,
-  Animated,
-  Easing,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 
-export default function Repair() {
+export default function Repair({ navigation }) {
   const [selectedType, setSelectedType] = useState(null);
-  const [selectedFabric, setSelectedFabric] = useState(null);
+  const [selectedCover, setSelectedCover] = useState(null);
+  const [selectedFrame, setSelectedFrame] = useState(null);
+  const [uploadedImage, setUploadedImage] = useState(null);
   const [notes, setNotes] = useState("");
-  const [image, setImage] = useState(null);
-  const [showOptions, setShowOptions] = useState(false);
-  const slideAnim = useState(new Animated.Value(300))[0];
+  const [qty, setQty] = useState(1);
+  const [totalCost, setTotalCost] = useState(0);
 
   const types = [
-    "Bed",
-    "Chair",
-    "Sofa",
-    "Sectionals",
-    "Ottoman",
-    "Tables",
-    "Benches",
+    { label: "Sofa", basePrice: 1500 },
+    { label: "Chair", basePrice: 1000 },
+    { label: "Bed", basePrice: 2000 },
+    { label: "Table", basePrice: 1200 },
+    { label: "Ottoman", basePrice: 900 },
   ];
 
-  const fabrics = [
-    { id: 1, color: "#D9D9D9" },
-    { id: 2, color: "#A0522D" },
-    { id: 3, color: "#A9A9A9" },
-    { id: 4, color: "#2F4F4F" },
+  const covers = [
+    { label: "Fabric", value: 0 },
+    { label: "Leather", value: 500 },
   ];
 
-  // Animate popup
-  const toggleOptions = () => {
-    if (showOptions) {
-      Animated.timing(slideAnim, {
-        toValue: 300,
-        duration: 250,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start(() => setShowOptions(false));
-    } else {
-      setShowOptions(true);
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 250,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-    }
+  const frames = [
+    { label: "Wooden", value: 0 },
+    { label: "Metal", value: 400 },
+  ];
+
+  const calculateTotal = () => {
+    if (!selectedType) return 0;
+    let total =
+      (selectedType?.basePrice || 0) +
+      (selectedCover?.value || 0) +
+      (selectedFrame?.value || 0);
+    return total * qty;
   };
 
-  // Choose from camera or gallery
-  const pickImage = async () => {
+  const updateTotal = () => setTotalCost(calculateTotal());
+
+  const handleSelect = (setter, value) => {
+    setter(value);
+    setTimeout(updateTotal, 100);
+  };
+
+  const handleQtyChange = (newQty) => {
+    const safeQty = Math.max(1, newQty);
+    setQty(safeQty);
+    setTimeout(updateTotal, 100);
+  };
+
+  const handleUploadImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaType ? [ImagePicker.MediaType.IMAGE] : ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [4, 3],
         quality: 0.8,
       });
-
       if (!result.canceled && result.assets?.length > 0) {
-        setImage(result.assets[0].uri);
-        toggleOptions(); // ✅ close popup after selecting
+        setUploadedImage(result.assets[0].uri);
       }
-    } catch (err) {
-      console.error("pickImage error:", err);
-      Alert.alert("Error", "Could not pick image.");
+    } catch (error) {
+      Alert.alert("Error", "Could not upload image.");
     }
   };
 
-  const takePhoto = async () => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert("Permission needed", "Camera access is required to take a photo.");
-        return;
-      }
+  const handlePlaceRepair = () => {
+  if (!uploadedImage) {
+    Alert.alert("Missing Image", "Please upload a photo of the damaged furniture first.");
+    return;
+  }
 
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaType ? [ImagePicker.MediaType.IMAGE] : ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
+  if (!selectedType || !selectedCover || !selectedFrame) {
+    Alert.alert("Missing Info", "Please complete all repair selections.");
+    return;
+  }
 
-      if (!result.canceled && result.assets?.length > 0) {
-        setImage(result.assets[0].uri);
-        toggleOptions(); // ✅ close popup after taking photo
-      }
-    } catch (err) {
-      console.error("takePhoto error:", err);
-      Alert.alert("Error", "Could not take photo.");
-    }
+  // ✅ Create product-like object for checkout
+  const repairOrder = {
+    id: Date.now().toString(),
+    name: `Repair - ${selectedType.label}`,
+    type: "repair",
+    category: "Repair Service",
+    imageUrl: uploadedImage,
+    uploadedImage, // keep for consistency with customization
+    price: totalCost,
+    qty,
+    selectedColor: selectedCover.label, // reuse this field for cover
+    selectedMaterial: selectedFrame.label,
+    notes,
   };
 
+  console.log("Navigating to Checkout with:", repairOrder);
 
+  navigation.navigate("CheckoutPage", { product: repairOrder });
+};
 
 
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.header}>REPAIR MANAGEMENT</Text>
+    <View style={styles.pageContainer}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContainer}
+      >
+        <Text style={styles.header}>REPAIR YOUR FURNITURE</Text>
 
-        {/* Preview Section */}
-        <View style={styles.previewBox}>
+        {/* IMAGE UPLOAD */}
+        <View style={styles.imageBox}>
           <Image
-            source={image ? { uri: image } : require("../assets/table.png")}
-            style={styles.furnitureImg}
+            source={
+              uploadedImage
+                ? { uri: uploadedImage }
+                : require("../assets/chairs.png") // 👈 placeholder image
+            }
+            style={styles.mainImage}
           />
 
-          {image ? (
+          {uploadedImage ? (
             <TouchableOpacity
-              style={[styles.uploadBtn, { backgroundColor: "#B22222" }]} // red remove button
-              onPress={() => setImage(null)}
+              style={[styles.uploadBtn, { backgroundColor: "#B22222" }]}
+              onPress={() => setUploadedImage(null)}
             >
               <Ionicons name="trash-outline" size={18} color="#fff" />
               <Text style={styles.uploadText}>Remove Photo</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.uploadBtn} onPress={toggleOptions}>
+            <TouchableOpacity style={styles.uploadBtn} onPress={handleUploadImage}>
               <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-              <Text style={styles.uploadText}>Upload Photo</Text>
+              <Text style={styles.uploadText}>Upload Damage Photo</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Step 1: Choose Type */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>1. Choose Type of Furniture</Text>
-          <View style={styles.typeGrid}>
-            {types.map((type, idx) => (
+        {/* TYPE SELECTION */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>1. CHOOSE TYPE</Text>
+          <View style={styles.optionRow}>
+            {types.map((item) => (
               <TouchableOpacity
-                key={idx}
+                key={item.label}
                 style={[
-                  styles.typeOption,
-                  selectedType === type && styles.selectedType,
+                  styles.optionBtn,
+                  selectedType?.label === item.label && styles.optionSelected,
                 ]}
-                onPress={() => setSelectedType(type)}
+                onPress={() => handleSelect(setSelectedType, item)}
               >
                 <Text
                   style={[
-                    styles.typeLabel,
-                    selectedType === type && styles.selectedTypeText,
+                    styles.optionText,
+                    selectedType?.label === item.label && styles.optionTextSelected,
                   ]}
                 >
-                  {type}
+                  {item.label}
+                </Text>
+                <Text style={styles.priceText}>
+                  ₱{item.basePrice.toLocaleString()}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
 
-        {/* Step 2: Choose Fabric */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>2. Choose Fabric</Text>
-          <View style={styles.fabricGrid}>
-            {fabrics.map((fabric) => (
+        {/* COVER SELECTION */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>2. CHOOSE COVER</Text>
+          <View style={styles.optionRow}>
+            {covers.map((item) => (
               <TouchableOpacity
-                key={fabric.id}
+                key={item.label}
                 style={[
-                  styles.fabricOption,
-                  { backgroundColor: fabric.color },
-                  selectedFabric === fabric.id && styles.selectedFabric,
+                  styles.optionBtn,
+                  selectedCover?.label === item.label && styles.optionSelected,
                 ]}
-                onPress={() => setSelectedFabric(fabric.id)}
-              />
+                onPress={() => handleSelect(setSelectedCover, item)}
+              >
+                <Text
+                  style={[
+                    styles.optionText,
+                    selectedCover?.label === item.label && styles.optionTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                <Text style={styles.priceText}>
+                  +₱{item.value.toLocaleString()}
+                </Text>
+              </TouchableOpacity>
             ))}
           </View>
         </View>
 
-        {/* Step 3: Notes */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>3. Additional Notes</Text>
+        {/* FRAME SELECTION */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>3. CHOOSE FRAME</Text>
+          <View style={styles.optionRow}>
+            {frames.map((item) => (
+              <TouchableOpacity
+                key={item.label}
+                style={[
+                  styles.optionBtn,
+                  selectedFrame?.label === item.label && styles.optionSelected,
+                ]}
+                onPress={() => handleSelect(setSelectedFrame, item)}
+              >
+                <Text
+                  style={[
+                    styles.optionText,
+                    selectedFrame?.label === item.label && styles.optionTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                <Text style={styles.priceText}>
+                  +₱{item.value.toLocaleString()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* NOTES */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>4. ADD NOTES</Text>
           <TextInput
-            style={styles.notesBox}
-            placeholder="Add notes here..."
+            style={styles.textBox}
+            placeholder="Describe what needs repair..."
+            placeholderTextColor="#999"
+            multiline
             value={notes}
             onChangeText={setNotes}
-            multiline
           />
         </View>
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>DESCRIPTION</Text>
-          <Text style={styles.paragraph}>
-            Provide a clear photo and instructions for your custom furniture. We will
-            review and confirm any adjustments with you.
-          </Text>
-
-          {/* Steps */}
-          <Text style={styles.sectionTitle}>STEPS</Text>
-          <Text style={styles.paragraph}>1. Upload or take a photo of the model.</Text>
-          <Text style={styles.paragraph}>2. Choose fabric and size options.</Text>
-          <Text style={styles.paragraph}>3. Add notes and place order.</Text>
-        </View>
-
-        <TouchableOpacity style={styles.placeBtn}>
-          <Text style={styles.placeText}>Place Order</Text>
-        </TouchableOpacity>
       </ScrollView>
 
-      {/* Upload Options Popup */}
-      {showOptions && (
-        <Animated.View
-          style={[
-            StyleSheet.absoluteFillObject,
-            { backgroundColor: "rgba(0,0,0,0.3)" }, // ✅ dim background
-          ]}
-        >
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            activeOpacity={1}
-            onPress={toggleOptions} // ✅ tap outside to close
-          />
+      {/* STICKY TOTAL BAR */}
+      <View style={styles.stickyBar}>
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>ESTIMATED TOTAL</Text>
+          <Text style={styles.totalValue}>₱{totalCost.toLocaleString()}</Text>
+        </View>
 
-          <Animated.View
-            style={[
-              styles.popup,
-              { transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            <View style={styles.popupInner}>
-              <Text style={styles.popupTitle}>Select Image Source</Text>
+        <View style={styles.bottomControls}>
+          <View style={styles.qtyContainer}>
+            <TouchableOpacity
+              onPress={() => handleQtyChange(qty - 1)}
+              style={styles.qtyBtn}
+            >
+              <Ionicons name="remove" size={18} color="#333" />
+            </TouchableOpacity>
+            <Text style={styles.qtyText}>{qty}</Text>
+            <TouchableOpacity
+              onPress={() => handleQtyChange(qty + 1)}
+              style={styles.qtyBtn}
+            >
+              <Ionicons name="add" size={18} color="#333" />
+            </TouchableOpacity>
+          </View>
 
-              <TouchableOpacity style={styles.popupBtn} onPress={takePhoto}>
-                <Ionicons name="camera-outline" size={18} color="#1B3D36" />
-                <Text style={styles.popupText}>Take Photo</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.popupBtn} onPress={pickImage}>
-                <Ionicons name="image-outline" size={18} color="#1B3D36" />
-                <Text style={styles.popupText}>Upload from Gallery</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.cancelBtn} onPress={toggleOptions}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        </Animated.View>
-      )}
-
+          <TouchableOpacity style={styles.buyNowBtn} onPress={handlePlaceRepair}>
+            <Text style={styles.buyNowText}>REQUEST REPAIR</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#FAF6E9",
-    padding: 16,
-  },
-  header: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#1B3D36",
-    marginBottom: 16,
-  },
-  previewBox: {
+  pageContainer: { flex: 1, backgroundColor: "#FAF6E9" },
+  scrollContainer: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 130 },
+  header: { fontSize: 22, fontWeight: "bold", color: "#1B3D36", marginBottom: 16 },
+  imageBox: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
+    alignItems: "center",
     shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-  furnitureImg: {
-    width: "100%",
-    height: 200,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
+  mainImage: { width: "100%", height: 200, borderRadius: 10, marginBottom: 10 },
   uploadBtn: {
     flexDirection: "row",
     backgroundColor: "#47695B",
-    paddingVertical: 10,
+    paddingVertical: 12,
     justifyContent: "center",
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 10,
+    width: "100%",
   },
-  uploadText: {
-    color: "#fff",
-    fontWeight: "600",
-    marginLeft: 8,
+  uploadText: { color: "#fff", fontWeight: "600", marginLeft: 8, textAlign: "center" },
+  section: { marginBottom: 10 },
+  sectionTitle: { fontWeight: "700", fontSize: 15, color: "#1B3D36", marginBottom: 10 },
+  optionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  optionBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#1B3D36",
+    marginBottom: 8,
   },
-  card: {
+  optionSelected: { backgroundColor: "#1B3D36" },
+  optionText: { color: "#1B3D36" },
+  optionTextSelected: { color: "#fff", fontWeight: "600" },
+  priceText: { fontSize: 12, color: "#2c6e49", marginTop: 3 },
+  textBox: {
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1B3D36",
-    marginBottom: 10,
-  },
-  typeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  typeOption: {
-    width: "48%",
-    height: 50,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "#ccc",
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  selectedType: {
-    backgroundColor: "#1B3D36",
-    borderColor: "#1B3D36",
-  },
-  typeLabel: {
-    color: "#333",
-  },
-  selectedTypeText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  fabricGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  fabricOption: {
-    width: "48%",
-    height: 60,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  selectedFabric: {
-    borderWidth: 3,
-    borderColor: "#1B3D36",
-  },
-  notesBox: {
-    height: 100,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 8,
     padding: 10,
-    backgroundColor: "#fff",
+    height: 100,
     textAlignVertical: "top",
   },
-  placeBtn: {
-    backgroundColor: "#1B3D36",
-    borderRadius: 10,
-    paddingVertical: 12,
-    marginBottom: 40,
-  },
-  placeText: {
-    color: "#fff",
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  popup: {
+  stickyBar: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "rgba(250, 246, 233, 0.98)",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    elevation: 10,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    elevation: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: -3 },
+    shadowRadius: 4,
   },
-  popupInner: {
+  totalRow: {
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 8,
   },
-  popupTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#1B3D36",
-    marginBottom: 12,
-  },
-  popupBtn: {
+  totalLabel: { fontSize: 15, fontWeight: "600", color: "#333" },
+  totalValue: { fontSize: 22, fontWeight: "700", color: "#2c6e49" },
+  bottomControls: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#E5E5E5",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  qtyContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    backgroundColor: "#f7f7f7",
+  },
+  qtyBtn: { paddingHorizontal: 8, paddingVertical: 4 },
+  qtyText: { fontSize: 16, fontWeight: "600", marginHorizontal: 8 },
+  buyNowBtn: {
+    flex: 1,
+    backgroundColor: "#2c6e49",
     borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginVertical: 5,
-    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
   },
-  popupText: {
-    fontSize: 14,
-    color: "#1B3D36",
-    marginLeft: 10,
-  },
-  cancelBtn: {
-    marginTop: 8,
-  },
-  cancelText: {
-    color: "#47695B",
-    fontWeight: "600",
-  },
-  paragraph: {
-  fontSize: 14,
-  color: "#444",
-  marginBottom: 6,
-  lineHeight: 20,
-},
+  buyNowText: { color: "#fff", fontWeight: "700", fontSize: 15 },
 });

@@ -23,6 +23,7 @@ import {
 } from "firebase/auth";
 import { auth, db } from "./firebaseConfig";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { sendPasswordResetEmail } from "firebase/auth";
 
 // ✅ Configure Google Sign-In
 GoogleSignin.configure({
@@ -46,7 +47,18 @@ export default function LoginScreen({ navigation }) {
 
     try {
       setLoading(true);
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      if (!user.emailVerified) {
+        Alert.alert(
+          "Email not verified",
+          "Please verify your email first by clicking the link sent to your inbox."
+        );
+        await auth.signOut();
+        return;
+      }
+
       Alert.alert("Login successful!");
       navigation.navigate("Landing");
     } catch (error) {
@@ -54,6 +66,24 @@ export default function LoginScreen({ navigation }) {
       Alert.alert("Login failed", error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+  if (!email) {
+    navigation.navigate("ForgotPassword");
+    return;
+  }
+
+  try {
+      await sendPasswordResetEmail(auth, email);
+      Alert.alert(
+        "Password Reset Email Sent",
+        "Check your inbox for a password reset link."
+      );
+    } catch (error) {
+      console.error("Forgot Password Error:", error);
+      Alert.alert("Error", error.message);
     }
   };
 
@@ -164,15 +194,24 @@ export default function LoginScreen({ navigation }) {
             />
           </TouchableOpacity>
         </View>
+        
 
-        <View style={styles.rememberContainer}>
-          <Checkbox
-            value={rememberMe}
-            onValueChange={setRememberMe}
-            color={rememberMe ? "#245c4f" : undefined}
-            style={styles.checkbox}
-          />
-          <Text style={styles.rememberText}>Remember Me</Text>
+        <View style={styles.rememberForgotContainer}>
+          {/* Remember Me */}
+          <View style={styles.rememberSection}>
+            <Checkbox
+              value={rememberMe}
+              onValueChange={setRememberMe}
+              color={rememberMe ? "#245c4f" : undefined}
+              style={styles.checkbox}
+            />
+            <Text style={styles.rememberText}>Remember Me</Text>
+          </View>
+
+          {/* Forgot Password */}
+          <TouchableOpacity onPress={handleForgotPassword}>
+            <Text style={styles.forgotText}>Forgot Password?</Text>
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity
@@ -190,12 +229,6 @@ export default function LoginScreen({ navigation }) {
           <TouchableOpacity style={styles.socialIcon} onPress={signIn}>
             <Ionicons name="logo-google" size={24} color="#DB4437" />
           </TouchableOpacity>
-          <View style={styles.socialIcon}>
-            <Ionicons name="logo-facebook" size={24} color="#3b5998" />
-          </View>
-          <View style={styles.socialIcon}>
-            <Ionicons name="logo-apple" size={24} color="black" />
-          </View>
         </View>
 
         <TouchableOpacity onPress={() => navigation.navigate("SignupScreen")}>
@@ -203,7 +236,7 @@ export default function LoginScreen({ navigation }) {
             Don’t have an account?{" "}
             <Text style={styles.signupLink}>Sign Up</Text>
           </Text>
-        </TouchableOpacity>
+        </TouchableOpacity> 
 
         {/* 👇 Browse Button (new) */}
         <TouchableOpacity onPress={() => navigation.navigate("Landing")}>
@@ -275,13 +308,25 @@ const styles = StyleSheet.create({
   eyeIcon: {
     paddingHorizontal: 12,
   },
-  rememberContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    marginLeft: 15,
-    marginBottom: 20,
-  },
+  rememberForgotContainer: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  width: "100%",
+  paddingHorizontal: 15,
+  marginBottom: 20,
+},
+
+rememberSection: {
+  flexDirection: "row",
+  alignItems: "center",
+},
+
+forgotText: {
+  color: "#fff",
+  fontSize: 13,
+  textDecorationLine: "underline",
+},
   rememberText: {
     color: "#fff",
     fontSize: 13,

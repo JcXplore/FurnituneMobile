@@ -33,33 +33,27 @@ export default function RecommenderPage() {
   const [imageUri, setImageUri] = useState(null);
   const [additionals, setAdditionals] = useState([]);
   const [selectedAdditionals, setSelectedAdditionals] = useState([]);
-  const [availableColors, setAvailableColors] = useState([]);
   const [availableSizes, setAvailableSizes] = useState([]);
   const [preferenceMode, setPreferenceMode] = useState(null);
   const [conversationMode, setConversationMode] = useState("setup");
 
-  const questions = [
-    {
-      key: "image",
-      question: "Would you like to upload a photo of your room?",
-      options: ["Upload Photo", "Skip for now"],
-    },
-    {
-      key: "category",
-      question: "What type of furniture are you looking for?",
-      options: ["Sofa", "Chair", "Bed", "Table", "Cabinet"],
-    },
-    {
-      key: "color",
-      question: "What color do you prefer?",
-      options: availableColors,
-    },
-    {
-      key: "size",
-      question: "What size do you prefer?",
-      options: availableSizes,
-    },
-  ];
+const questions = [
+  {
+    key: "image",
+    question: "Would you like to upload a photo of your room?",
+    options: ["Upload Photo", "Skip for now"],
+  },
+  {
+    key: "category",
+    question: "What type of furniture are you looking for?",
+    options: ["Sofa", "Chair", "Bed", "Table", "Cabinet"],
+  },
+  {
+    key: "size",
+    question: "What size do you prefer?",
+    options: availableSizes,
+  },
+];
 
   const botRespond = (text) => setMessages((prev) => [...prev, { from: "bot", text }]);
   const userRespond = (text) => setMessages((prev) => [...prev, { from: "user", text }]);
@@ -117,7 +111,6 @@ export default function RecommenderPage() {
     setImageUri(null);
     setAdditionals([]);
     setSelectedAdditionals([]);
-    setAvailableColors([]);
     setAvailableSizes([]);
     setPreferenceMode(null);
     setConversationMode("setup");
@@ -147,21 +140,34 @@ export default function RecommenderPage() {
   // ==========================
   // 📦 Load available options
   // ==========================
-  const loadCategoryData = async (category) => {
-    try {
-      const [optRes, addRes] = await Promise.all([
-        axios.get(`${API_BASE}/get-options/${category}`),
-        axios.get(`${API_BASE}/get-additionals/${category}`),
-      ]);
+  // RecommenderPage.js
 
-      const { colors, sizes } = optRes.data;
-      setAvailableColors(colors || []);
-      setAvailableSizes(sizes || []);
-      setAdditionals(addRes.data.additionals || []);
-    } catch (err) {
-      console.error("Error fetching category data:", err);
-    }
-  };
+const loadCategoryData = async (category) => {
+  try {
+    const [optRes, addRes] = await Promise.all([
+      axios.get(`${API_BASE}/get-options/${category}`),
+      axios.get(`${API_BASE}/get-additionals/${category}`),
+    ]);
+
+    const { sizes } = optRes.data;
+
+    // Prefer server-provided mapping; fallback builds pairs
+    const raw = addRes.data.additionals || [];
+    const pretty = addRes.data.additionalsPretty || raw.map(k =>
+      k.replace(/^has/, "With ").replace(/([A-Z])/g, " $1").trim()
+    );
+    const map = addRes.data.additionalsMap || raw.map((k, i) => ({ key: k, label: pretty[i] || k }));
+
+    setAvailableSizes(sizes || []);
+    setAdditionals(map);        // [{ key, label }]
+    setSelectedAdditionals([]); // reset when category changes
+  } catch (err) {
+    console.error("Error fetching category data:", err);
+    setAdditionals([]);
+    setSelectedAdditionals([]);
+  }
+};
+
 
   // ==========================
   // 🪑 Show category items
@@ -176,7 +182,6 @@ export default function RecommenderPage() {
         return;
       }
 
-      botRespond(`Now, what color would you like for your ${category.toLowerCase()}?`);
     } catch (err) {
       console.error("Error loading category info:", err);
       botRespond("⚠️ I couldn’t load product details for this category.");
@@ -186,16 +191,24 @@ export default function RecommenderPage() {
   // ==========================
   // ▶️ Move to next question
   // ==========================
-  const nextStep = () => {
-    if (step < questions.length - 1) {
-      setStep(step + 1);
-      botRespond(questions[step + 1].question);
-    } else if (additionals.length > 0) {
-      botRespond("Would you like to include any of these additional features?");
+ const nextStep = () => {
+  if (step < questions.length - 1) {
+    setStep(step + 1);
+    botRespond(questions[step + 1].question);
+  } else {
+    // ✅ Always check additionals after size
+    if (additionals.length > 0) {
+      // 🔧 Support both array of strings and array of {key, label}
+    const featuresList = additionals.map(a => a.label ?? a).join(", ");
+    botRespond(`Would you like to include any of these additional features? (${featuresList})`);
+
     } else {
-      submitPreferences();
+      botRespond("No additional features are available for this category.");
+      setTimeout(() => submitPreferences(), 1500);
     }
-  };
+  }
+};
+
 
   // ==========================
   // ✨ Submit preferences
@@ -206,11 +219,11 @@ export default function RecommenderPage() {
 
     try {
       const response = await axios.post(`${API_BASE}/recommend-preference`, {
-        category: answers.category,
-        color: answers.color,
-        size: answers.size,
-        additionals: selectedAdditionals,
-      });
+  category: answers.category,
+  size: answers.size,
+  additionals: selectedAdditionals, // raw has* keys now
+});
+
 
       const products = response.data.recommendations || [];
       setResults(products);
@@ -238,37 +251,50 @@ export default function RecommenderPage() {
     formData.append("file", { uri, name: "room.jpg", type: "image/jpeg" });
 
     try {
-      const response = await axios.post(`${API_BASE}/recommend-image`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      const productIds = response.data.recommendations;
-      const fetched = [];
+  const response = await axios.post(`${API_BASE}/recommend-image`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
 
-      for (let id of productIds) {
-        const ref = doc(db, "products", id);
-        const snap = await getDoc(ref);
-        if (snap.exists()) fetched.push({ id, ...snap.data() });
-      }
+  console.log("Upload response:", response.data);
 
-      setResults(fetched);
-      setConversationMode("results");
-      botRespond("✅ I found furniture that visually matches your image!");
-    } catch (error) {
-      console.error(error);
-      botRespond("😞 I couldn’t process the image. Please try again.");
-    } finally {
-      setLoading(false);
+  const productIds = response.data.recommendations || []; // ✅ avoid undefined
+  const fetched = [];
+
+  // Only fetch products if recommendations exist
+  if (productIds.length > 0) {
+    for (let id of productIds) {
+      const ref = doc(db, "products", id);
+      const snap = await getDoc(ref);
+      if (snap.exists()) fetched.push({ id, ...snap.data() });
     }
+  }
+
+  setResults(fetched);
+  setConversationMode("results");
+
+  if (productIds.length > 0) {
+    botRespond("✅ I found furniture that visually matches your image!");
+  } else {
+    botRespond("✅ Image uploaded successfully (no recommendations yet).");
+  }
+} catch (error) {
+  console.error("Upload failed:", error);
+  botRespond("😞 I couldn’t process the image. Please try again.");
+} finally {
+  setLoading(false);
+}
+
   };
 
   // ==========================
   // 🧩 Toggle additional features
   // ==========================
-  const toggleAdditional = (add) => {
-    setSelectedAdditionals((prev) =>
-      prev.includes(add) ? prev.filter((a) => a !== add) : [...prev, add]
-    );
-  };
+  const toggleAdditional = (key) => {
+  setSelectedAdditionals((prev) =>
+    prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+  );
+};
+
 
   // ==========================
   // 💬 UI
@@ -325,33 +351,29 @@ export default function RecommenderPage() {
           )}
 
         {/* Additionals */}
-        {additionals.length > 0 &&
-        conversationMode === "setup" &&
-        answers.color &&
-        answers.size && (
-          <>
-            <Text style={styles.additionalText}>Choose extra features:</Text>
-            <View style={styles.optionsContainer}>
-              {additionals.map((opt) => (
-                <TouchableOpacity
-                  key={opt}
-                  style={[
-                    styles.optionButton,
-                    selectedAdditionals.includes(opt) && { backgroundColor: "#14532d" },
-                  ]}
-                  onPress={() => toggleAdditional(opt)}
-                >
-                  <Text style={styles.optionText}>
-                    {opt.replace("has", "With ").replace(/([A-Z])/g, " $1")}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity style={styles.optionButton} onPress={submitPreferences}>
-              <Text style={styles.optionText}>Continue ➜</Text>
-            </TouchableOpacity>
-          </>
-        )}
+        {additionals.length > 0 && conversationMode === "setup" && answers.size && (
+  <>
+    <Text style={styles.additionalText}>Choose extra features:</Text>
+    <View style={styles.optionsContainer}>
+      {additionals.map((opt) => (
+        <TouchableOpacity
+          key={opt.key}
+          style={[
+            styles.optionButton,
+            selectedAdditionals.includes(opt.key) && { backgroundColor: "#14532d" },
+          ]}
+          onPress={() => toggleAdditional(opt.key)}
+        >
+          <Text style={styles.optionText}>{opt.label}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+    <TouchableOpacity style={styles.optionButton} onPress={submitPreferences}>
+      <Text style={styles.optionText}>Continue ➜</Text>
+    </TouchableOpacity>
+  </>
+)}
+
 
         {loading && (
           <View style={{ alignItems: "center", marginVertical: 15 }}>

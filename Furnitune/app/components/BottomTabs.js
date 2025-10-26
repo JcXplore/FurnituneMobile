@@ -67,7 +67,11 @@ export default function BottomTabs() {
       else if (route.name === "NotificationPage") setActiveTab("notifications");
       else if (["LoginPage", "Settings"].includes(route.name))
         setActiveTab("user");
-      else if (["Customization", "Repair", "ChatbotPage"].includes(route.name))
+      else if (
+        ["CustomizationPage", "Repair", "RecommenderPage", "ChatbotPage"].includes(
+          route.name
+        )
+      )
         setActiveTab("robot");
     }, [route.name])
   );
@@ -165,18 +169,20 @@ export default function BottomTabs() {
                 shadowOpacity: 0.2,
                 shadowRadius: 5,
                 justifyContent: "space-between",
-                width: 180,
+                width: 240, // ✅ wider for 4 icons
               }}
             >
+              {/* ⚙️ Customization */}
               <TouchableOpacity
                 onPress={() => {
                   setShowSubMenu(false);
                   navigation.navigate("CustomizationPage");
                 }}
               >
-                <Ionicons name="settings-outline" size={24} color="#2c6e49" />
+                <Ionicons name="settings" size={24} color="#2c6e49" />
               </TouchableOpacity>
 
+              {/* 🤖 Chatbot */}
               <TouchableOpacity
                 onPress={() => {
                   setShowSubMenu(false);
@@ -190,6 +196,17 @@ export default function BottomTabs() {
                 />
               </TouchableOpacity>
 
+              {/* ⭐ Recommender System (NEW) */}
+              <TouchableOpacity
+                onPress={() => {
+                  setShowSubMenu(false);
+                  navigation.navigate("RecommenderPage");
+                }}
+              >
+                <Ionicons name="sparkles" size={26} color="#2c6e49" />
+              </TouchableOpacity>
+
+              {/* 🛠️ Repair */}
               <TouchableOpacity
                 onPress={() => {
                   setShowSubMenu(false);
@@ -198,9 +215,12 @@ export default function BottomTabs() {
               >
                 <FontAwesome5 name="tools" size={22} color="#2c6e49" />
               </TouchableOpacity>
+
+              
             </View>
           )}
 
+          {/* 🤖 Main Robot Icon */}
           <TouchableOpacity onPress={() => handlePress("robot")}>
             <MaterialCommunityIcons
               name="robot-outline"

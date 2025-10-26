@@ -49,6 +49,44 @@ export default function ProductDetailsScreen({ route, navigation }) {
   const FALLBACK_IMAGE =
     "https://via.placeholder.com/600x400?text=No+Image+Available";
 
+  const [reviews, setReviews] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+
+  useEffect(() => {
+  if (!product?.id && !product?.productId) return;
+
+  async function fetchReviews() {
+    try {
+      setReviewsLoading(true);
+      const snapshot = await getDocs(collection(db, "reviews"));
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      // Filter locally: look inside items[] for productId match
+      const filtered = data.filter(
+        (r) =>
+          Array.isArray(r.items) &&
+          r.items.some(
+            (item) =>
+              item.productId === (product.id || product.productId)
+          )
+      );
+
+      console.log("✅ Found reviews for this product:", filtered.length);
+      setReviews(filtered);
+    } catch (error) {
+      console.error("❌ Error loading reviews:", error);
+    } finally {
+      setReviewsLoading(false);
+    }
+  }
+
+  fetchReviews();
+}, [product?.id]);
+
+
+
+
+
 // --- Utility: Normalize Firebase path ---
   const normalizePath = (path = "") => {
     let result = path.trim();
@@ -152,6 +190,9 @@ export default function ProductDetailsScreen({ route, navigation }) {
         setProduct(prod);
         setImages(resolvedImages);
         setMainImage(resolvedImages[0] || FALLBACK_IMAGE);
+        // Restore selected options if passed from cart
+        setSelectedColor(route?.params?.selectedColor || null);
+        setSelectedSize(route?.params?.selectedSize || null);
 
 
         // 🚫 No auto-selection — user must manually choose
@@ -436,6 +477,41 @@ export default function ProductDetailsScreen({ route, navigation }) {
             <Text style={styles.description}>{product.description}</Text>
           </View>
         )}
+
+{/* 🔸 Product Reviews Section */}
+<View style={styles.section}>
+  <Text style={styles.subTitle}>CUSTOMER REVIEWS</Text>
+
+  {reviewsLoading ? (
+    <ActivityIndicator size="small" color="#2c6e49" />
+  ) : reviews.length === 0 ? (
+    <Text style={{ color: "#666", fontStyle: "italic" }}>
+      No reviews yet. Be the first to review this product!
+    </Text>
+  ) : (
+    reviews.map((rev, idx) => (
+      <View key={idx} style={styles.reviewCard}>
+        <View style={styles.reviewHeader}>
+          <Ionicons name="person-circle-outline" size={28} color="#2c6e49" />
+          <View>
+            <Text style={styles.reviewUser}>{rev.username}</Text>
+            <Text style={styles.reviewDate}>
+              {rev.createdAt?.toDate
+                ? rev.createdAt.toDate().toLocaleDateString()
+                : "—"}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.reviewRating}>{"⭐".repeat(rev.rating || 0)}</Text>
+        {rev.message ? (
+          <Text style={styles.reviewText}>{rev.message}</Text>
+        ) : null}
+      </View>
+    ))
+  )}
+</View>
+
+
       </ScrollView>
 
       
@@ -520,6 +596,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
                   selectedSize,
                   qty,
                   note,
+                  type: "standard"
                 },
               });
             }}
@@ -692,5 +769,37 @@ buttonsRow: {
   elevation: 3,
 
 },
+reviewCard: {
+  backgroundColor: "#fff",
+  borderRadius: 10,
+  padding: 12,
+  marginBottom: 10,
+  borderWidth: 1,
+  borderColor: "#eee",
+},
+reviewHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  marginBottom: 6,
+},
+reviewUser: {
+  fontWeight: "700",
+  color: "#2c6e49",
+  fontSize: 13,
+},
+reviewDate: {
+  color: "#777",
+  fontSize: 11,
+},
+reviewRating: {
+  fontSize: 14,
+  marginVertical: 4,
+},
+reviewText: {
+  fontSize: 13,
+  color: "#333",
+  lineHeight: 18,
+},
+
 
 });

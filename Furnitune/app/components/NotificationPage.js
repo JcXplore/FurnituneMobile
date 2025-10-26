@@ -12,6 +12,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { getAuth } from "firebase/auth";
+import { setDoc } from "firebase/firestore";
+
 import {
   getFirestore,
   collection,
@@ -81,16 +83,57 @@ export default function NotificationPage({ navigation }) {
 
   // ✅ Handle tap on a notification
   const handlePress = async (item) => {
-    if (!item.read) {
-      const notifRef = doc(db, "users", user.uid, "notifications", item.id);
-      await updateDoc(notifRef, { read: true });
-    }
+  try {
+    const notifRef = doc(db, "users", user.uid, "notifications", item.id);
 
-    // Navigate to linked page
+    // ✅ Only update the `read` field — this matches your rule exactly
+    if (!item.read) {
+  const notifRef = doc(db, "users", user.uid, "notifications", item.id);
+
+  // ✅ Include all required fields so Firestore rules pass
+  await setDoc(
+    notifRef,
+    {
+      userId: user.uid,
+      title: item.title || "",
+      body: item.body || "",
+      image: item.image || "",
+      link: item.link || "",
+      type: item.type || "",
+      createdAt: item.createdAt || null,
+      orderId: item.orderId || "",
+      repairId: item.repairId || "",
+      status: item.status || "",
+      read: true, // <-- update
+      readAt: new Date(), // optional
+    },
+    { merge: true }
+  );
+
+  // ✅ Instantly reflect in UI
+  setNotifications((prev) =>
+    prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
+  );
+}
+
+
+    // 🧭 Then navigate
     if (item.orderId) {
-      navigation.navigate("OrderSummary", { orderId: item.orderId });
+      navigation.navigate("OrderPage", { orderId: item.orderId, source: "orders" });
+    } else if (item.link) {
+      const params = new URLSearchParams(item.link.split("?")[1]);
+      const orderId = params.get("orderId");
+      if (orderId) {
+        navigation.navigate("OrderPage", { orderId, source: "orders" });
+      }
+    } else {
+      Alert.alert("Notification", "This notification has no linked page.");
     }
-  };
+  } catch (error) {
+    console.error("❌ Error handling notification click:", error);
+  }
+};
+
 
   // ✅ Render each notification
   const renderItem = ({ item }) => (

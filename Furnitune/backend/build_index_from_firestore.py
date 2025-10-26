@@ -120,3 +120,4 @@ with open(PICKLE_PATH, "wb") as f:
 print("\n✅ Done!")
 print(f"🧩 Saved {len(embeddings)} embeddings to {PICKLE_PATH}")
 print(f"🗂️ Saved FAISS index to {INDEX_PATH}")
+

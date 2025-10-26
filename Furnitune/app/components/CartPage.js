@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Checkbox from "expo-checkbox";
@@ -17,6 +18,7 @@ import {
   getDocs,
   doc,
   deleteDoc,
+  addDoc,
 } from "firebase/firestore";
 import { app } from "./firebaseConfig";
 import { useNavigation } from "@react-navigation/native";
@@ -31,6 +33,21 @@ export default function CartPage() {
   const auth = getAuth(app);
   const db = getFirestore(app);
 
+  // 🔹 Navigate to product details
+  const handleProductPress = (item) => {
+    if (!item.productId) {
+      Alert.alert("Missing Product Link", "This product cannot be opened.");
+      return;
+    }
+
+    navigation.navigate("ProductDetails", {
+      product: item.productId, // send the product ID as "product"
+      selectedColor: item.selectedColor || null,
+      selectedSize: item.selectedSize || null,
+    });
+  };
+
+  // 🔹 Auth & Cart Fetch
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -85,10 +102,7 @@ export default function CartPage() {
 
   const subtotal = cartItems
     .filter((item) => selected.includes(item.id))
-    .reduce(
-      (sum, item) => sum + (item.price || 0) * (item.qty || 1),
-      0
-    );
+    .reduce((sum, item) => sum + (item.price || 0) * (item.qty || 1), 0);
 
   if (loading) {
     return (
@@ -149,29 +163,37 @@ export default function CartPage() {
                 style={styles.checkbox}
               />
 
-              <Image
-                source={{
-                  uri:
-                    item.imageUrl ||
-                    "https://via.placeholder.com/80x80?text=No+Image",
-                }}
-                style={styles.image}
-              />
+              {/* 🔹 Product Clickable Area */}
+              <TouchableOpacity
+                style={{ flexDirection: "row", alignItems: "center", flex: 1 }}
+                onPress={() => handleProductPress(item)}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={{
+                    uri:
+                      item.imageUrl ||
+                      "https://via.placeholder.com/80x80?text=No+Image",
+                  }}
+                  style={styles.image}
+                />
 
-              <View style={styles.details}>
-                <Text style={styles.name} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                <Text style={styles.qty}>
-                  Qty: {item.qty}{" "}
-                  {item.selectedSize ? `• ${item.selectedSize}` : ""}
-                </Text>
-                {item.selectedColor && (
-                  <Text style={styles.color}>Color: {item.selectedColor}</Text>
-                )}
-                <Text style={styles.price}>₱{item.price?.toFixed(2)}</Text>
-              </View>
+                <View style={styles.details}>
+                  <Text style={styles.name} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.qty}>
+                    Qty: {item.qty}{" "}
+                    {item.selectedSize ? `• ${item.selectedSize}` : ""}
+                  </Text>
+                  {item.selectedColor && (
+                    <Text style={styles.color}>Color: {item.selectedColor}</Text>
+                  )}
+                  <Text style={styles.price}>₱{item.price?.toFixed(2)}</Text>
+                </View>
+              </TouchableOpacity>
 
+              {/* 🗑️ Delete Button */}
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={() => handleDelete(item.id)}
@@ -202,13 +224,38 @@ export default function CartPage() {
             subtotal === 0 && { backgroundColor: "#ccc" },
           ]}
           disabled={subtotal === 0}
-          onPress={() =>
-            navigation.navigate("OrderPage", {
-              selectedItems: cartItems.filter((item) =>
+          onPress={async () => {
+            try {
+              const selectedItemsData = cartItems.filter((item) =>
                 selected.includes(item.id)
-              ),
-            })
-          }
+              );
+
+              if (selectedItemsData.length === 0) {
+                Alert.alert("No items selected", "Please select at least one item.");
+                return;
+              }
+
+              const total = selectedItemsData.reduce(
+                (sum, item) => sum + (item.price || 0) * (item.qty || 1),
+                0
+              );
+
+              const ordersRef = collection(db, "orders");
+              const newOrder = await addDoc(ordersRef, {
+                userId: user.uid,
+                items: selectedItemsData,
+                subtotal: total,
+                shippingFee: 510,
+                total: total + 510,
+                status: "processing_order",
+                createdAt: new Date(),
+              });
+
+              navigation.navigate("OrderPage", { orderId: newOrder.id });
+            } catch (error) {
+              console.error("Error creating order:", error);
+            }
+          }}
         >
           <Text style={styles.checkoutText}>
             {subtotal === 0 ? "SELECT ITEMS" : "CHECK OUT"}
@@ -219,12 +266,9 @@ export default function CartPage() {
   );
 }
 
+// 🎨 Styles
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f8f6f2",
-    paddingHorizontal: 16,
-  },
+  container: { flex: 1, backgroundColor: "#f8f6f2", paddingHorizontal: 16 },
   header: {
     paddingVertical: 16,
     alignItems: "center",
@@ -244,12 +288,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginLeft: 6,
   },
-  selectAllText: {
-    fontSize: 13,
-    color: "#333",
-    marginLeft: 8,
-    fontWeight: "500",
-  },
+  selectAllText: { fontSize: 13, color: "#333", marginLeft: 8, fontWeight: "500" },
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -262,39 +301,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
   },
-  checkbox: {
-    marginRight: 8,
-  },
+  checkbox: { marginRight: 8 },
   image: {
     width: 70,
     height: 70,
     borderRadius: 10,
     backgroundColor: "#eee",
   },
-  details: {
-    flex: 1,
-    marginLeft: 10,
-  },
-  name: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 2,
-  },
-  qty: {
-    fontSize: 12,
-    color: "#555",
-  },
-  color: {
-    fontSize: 12,
-    color: "#555",
-  },
-  price: {
-    fontSize: 14,
-    color: "#2c6e49",
-    fontWeight: "700",
-    marginTop: 4,
-  },
+  details: { flex: 1, marginLeft: 10 },
+  name: { fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 2 },
+  qty: { fontSize: 12, color: "#555" },
+  color: { fontSize: 12, color: "#555" },
+  price: { fontSize: 14, color: "#2c6e49", fontWeight: "700", marginTop: 4 },
   deleteButton: {
     backgroundColor: "#f2f0eb",
     padding: 8,
@@ -316,15 +334,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 12,
   },
-  totalLabel: {
-    fontSize: 14,
-    color: "#444",
-  },
-  totalValue: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#2c6e49",
-  },
+  totalLabel: { fontSize: 14, color: "#444" },
+  totalValue: { fontSize: 16, fontWeight: "700", color: "#2c6e49" },
   checkoutButton: {
     backgroundColor: "#2c6e49",
     borderRadius: 30,
@@ -337,21 +348,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.5,
   },
-  emptyState: {
-    flex: 1,
-    alignItems: "center",
-    marginTop: 120,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 10,
-  },
-  loginPrompt: {
-    fontSize: 16,
-    color: "#333",
-    marginBottom: 10,
-  },
+  emptyState: { flex: 1, alignItems: "center", marginTop: 120 },
+  emptyText: { fontSize: 14, color: "#666", marginTop: 10 },
+  loginPrompt: { fontSize: 16, color: "#333", marginBottom: 10 },
   loginButton: {
     backgroundColor: "#2c6e49",
     paddingVertical: 10,
@@ -363,9 +362,5 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     letterSpacing: 0.5,
   },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
 });

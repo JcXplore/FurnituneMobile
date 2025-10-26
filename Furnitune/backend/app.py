@@ -3,6 +3,40 @@ from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
 from firebase_admin import credentials, firestore
 from typing import List
+import re
+from fastapi import UploadFile, File
+import tempfile
+import shutil
+import faiss
+import pickle
+import numpy as np
+from PIL import Image
+from sentence_transformers import SentenceTransformer
+import io
+
+# Load FAISS + CLIP model once
+try:
+    print("🔍 Loading FAISS index and embeddings...")
+    INDEX_PATH = "model/clip_index.faiss"
+    PICKLE_PATH = "data/embeddings.pkl"
+
+    index = faiss.read_index(INDEX_PATH)
+    with open(PICKLE_PATH, "rb") as f:
+        data = pickle.load(f)
+
+    embeddings = data["embeddings"]
+    product_ids = data["product_ids"]
+    clip_model = SentenceTransformer("clip-ViT-B-32")
+
+    print(f"✅ Loaded {len(product_ids)} product embeddings for visual search.")
+
+except Exception as e:
+    print("⚠️ Could not load FAISS index:", e)
+    index = None
+    embeddings = {}
+    product_ids = []
+    clip_model = None
+
 
 # --- Initialize Firebase ---
 cred = credentials.Certificate("serviceAccountKey.json")
@@ -26,10 +60,27 @@ app.add_middleware(
 # ======================================================
 CATEGORY_MAP = {
     "sofa": "Sofas",
+    "sofas": "Sofas",
     "chair": "Chairs",
+    "chairs": "Chairs",
     "bed": "Beds",
+    "beds": "Beds",
     "table": "Tables",
+    "tables": "Tables",
     "cabinet": "Cabinets",
+    "cabinets": "Cabinets",
+}
+
+# Put this near CATEGORY_MAP
+BAD_FEATURES_BY_CATEGORY = {
+    "Beds": {
+        "hasArmrest", "hasRecline", "hasWheels", "hasLumbarSupport",
+        "hasSwivel", "hasChaise", "hasSectional", "hasSofaBed"
+    },
+    "Chairs": set(),
+    "Sofas": set(),
+    "Tables": set(),
+    "Cabinets": set(),
 }
 
 def normalize_category_input(category: str) -> str:
@@ -111,25 +162,75 @@ async def get_options(category: str):
         return {"error": str(e)}
 
 
+def humanize_feature_key(k: str) -> str:
+    # "hasCabinets" -> "With Cabinets"
+    if not k.startswith("has"):
+        return k
+    pretty = k[3:]  # drop "has"
+    # split CamelCase -> "Cabinets"
+    out = []
+    word = ""
+    for ch in pretty:
+        if ch.isupper() and word:
+            out.append(word)
+            word = ch
+        else:
+            word += ch
+    if word:
+        out.append(word)
+    return "With " + " ".join(out)
+
+
+
+
 # ======================================================
 # 🧠 GET ADDITIONALS (like hasCabinet, hasStorage)
 # ======================================================
+
 @app.get("/get-additionals/{category}")
 async def get_additionals(category: str):
+    """
+    Return features (has*) that are TRUE for products in the selected category.
+    Uses a small deny-list to strip obviously irrelevant features.
+    """
     try:
         normalized = normalize_category_input(category)
-        docs = db.collection("products").where("baseType", "==", normalized).stream()
+        docs = []
+        for d in db.collection("products").stream():
+            data = d.to_dict()
+            if str(data.get("baseType", "")).strip().lower() == normalized.lower():
+                docs.append(d)
 
-        feature_count = {}
-        for doc in docs:
-            for feature in extract_features(doc.to_dict()):
-                feature_count[feature] = feature_count.get(feature, 0) + 1
+        if not docs:
+            return {"category": normalized, "additionals": [], "additionalsPretty": [], "additionalsMap": []}
 
-        sorted_features = sorted(feature_count, key=lambda x: feature_count[x], reverse=True)
-        return {"additionals": sorted_features}
+        bad = BAD_FEATURES_BY_CATEGORY.get(normalized, set())
+
+        # Count true has* fields
+        feature_true_count = {}
+        for d in docs:
+            data = d.to_dict()
+            for k, v in data.items():
+                if k.startswith("has") and isinstance(v, bool) and v and k not in bad:
+                    feature_true_count[k] = feature_true_count.get(k, 0) + 1
+
+        if not feature_true_count:
+            return {"category": normalized, "additionals": [], "additionalsPretty": [], "additionalsMap": []}
+
+        sorted_keys = sorted(feature_true_count, key=lambda k: feature_true_count[k], reverse=True)
+
+        def pretty(k: str) -> str:
+            label = re.sub(r"([A-Z])", r" \1", k[3:]).strip()
+            return f"With {label}"
+
+        return {
+            "category": normalized,
+            "additionals": sorted_keys,                         # raw keys (e.g., hasCabinets)
+            "additionalsPretty": [pretty(k) for k in sorted_keys],
+            "additionalsMap": [{"key": k, "label": pretty(k)} for k in sorted_keys],
+        }
     except Exception as e:
         return {"error": str(e)}
-
 
 # ======================================================
 # 🛍️ GET PRODUCTS BY CATEGORY
@@ -203,6 +304,46 @@ async def recommend_preference(preferences: dict = Body(...)):
         return {"recommendations": candidates[:10]}
     except Exception as e:
         return {"error": str(e)}
+
+
+from fastapi import UploadFile, File
+import tempfile
+import shutil
+
+@app.post("/recommend-image")
+async def recommend_image(file: UploadFile = File(...)):
+    """
+    Receives an uploaded image, encodes it using CLIP,
+    compares it to the FAISS index, and returns top similar products.
+    """
+    try:
+        # Read and convert image
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+
+        if not clip_model or not index:
+            return {"error": "Visual recommender not initialized."}
+
+        # Encode uploaded image using CLIP
+        query_vector = clip_model.encode([image])
+        query_vector = np.array(query_vector).astype("float32")
+
+        # Search FAISS for top 5 nearest neighbors
+        k = 5
+        distances, indices = index.search(query_vector, k)
+        nearest_ids = [product_ids[i] for i in indices[0] if i < len(product_ids)]
+
+        print(f"✅ Found similar items for {file.filename}: {nearest_ids}")
+
+        return {
+            "message": "Image analyzed successfully!",
+            "recommendations": nearest_ids,
+        }
+
+    except Exception as e:
+        print("❌ Error in /recommend-image:", e)
+        return {"error": str(e)}
+
 
 
 # ======================================================
