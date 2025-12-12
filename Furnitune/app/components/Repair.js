@@ -8,35 +8,50 @@ import {
   TextInput,
   Image,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
+import { getAuth } from "firebase/auth";
 
 export default function Repair({ navigation }) {
   const [selectedType, setSelectedType] = useState(null);
   const [selectedCover, setSelectedCover] = useState(null);
   const [selectedFrame, setSelectedFrame] = useState(null);
-  const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploadedImages, setUploadedImages] = useState([]);
   const [notes, setNotes] = useState("");
   const [qty, setQty] = useState(1);
+  const [uploading, setUploading] = useState(false);
   const [totalCost, setTotalCost] = useState(0);
 
+React.useEffect(() => {
+  const total =
+    (selectedType?.basePrice || 0) +
+    (selectedCover?.value || 0) +
+    (selectedFrame?.value || 0);
+
+  setTotalCost(total * qty);
+}, [selectedType, selectedCover, selectedFrame, qty]);
+
   const types = [
-    { label: "Sofa", basePrice: 1500 },
-    { label: "Chair", basePrice: 1000 },
-    { label: "Bed", basePrice: 2000 },
-    { label: "Table", basePrice: 1200 },
-    { label: "Ottoman", basePrice: 900 },
-  ];
+  { label: "Bed", basePrice: 3200 },
+  { label: "Chair", basePrice: 1200 },
+  { label: "Dining Table", basePrice: 2800 },
+  { label: "Ottoman", basePrice: 1400 },
+  { label: "Sectionals", basePrice: 3600 },
+  { label: "Sofa", basePrice: 3000 },
+];
 
   const covers = [
-    { label: "Fabric", value: 0 },
-    { label: "Leather", value: 500 },
+    { label: "Fabric", value: 800 },
+    { label: "Leather", value: 1500 },
+    { label: "None", value: 0 },
   ];
 
   const frames = [
-    { label: "Wooden", value: 0 },
-    { label: "Metal", value: 400 },
+    { label: "Wooden", value: 800 },
+    { label: "Metal", value: 1000 },
+    { label: "None", value: 0 },
   ];
 
   const calculateTotal = () => {
@@ -51,34 +66,41 @@ export default function Repair({ navigation }) {
   const updateTotal = () => setTotalCost(calculateTotal());
 
   const handleSelect = (setter, value) => {
-    setter(value);
-    setTimeout(updateTotal, 100);
-  };
+  setter(value);
+};
 
-  const handleQtyChange = (newQty) => {
-    const safeQty = Math.max(1, newQty);
-    setQty(safeQty);
-    setTimeout(updateTotal, 100);
-  };
+const handleSelectImages = async () => {
+  try {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsMultipleSelection: true,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      selectionLimit: 3, // limit to 3 images
+    });
 
-  const handleUploadImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets?.length > 0) {
-        setUploadedImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      Alert.alert("Error", "Could not upload image.");
+    if (!result.canceled) {
+      // Handle both single and multiple selection
+      const selected = result.assets.map((asset) => asset.uri);
+      setUploadedImages(selected);
     }
-  };
+  } catch (error) {
+    console.error("Error selecting images:", error);
+    Alert.alert("Error", "Failed to select images. Please try again.");
+  }
+};
 
-  const handlePlaceRepair = () => {
-  if (!uploadedImage) {
-    Alert.alert("Missing Image", "Please upload a photo of the damaged furniture first.");
+
+  const handlePlaceRepair = async () => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+
+  if (!user) {
+    Alert.alert("Error", "You must be logged in to request a repair.");
+    return;
+  }
+
+  if (uploadedImages.length === 0) {
+    Alert.alert("Missing Photos", "Please upload at least one photo of the damaged furniture.");
     return;
   }
 
@@ -87,24 +109,40 @@ export default function Repair({ navigation }) {
     return;
   }
 
-  // ✅ Create product-like object for checkout
-  const repairOrder = {
-    id: Date.now().toString(),
+   // ✅ Build consistent product object like customization
+  const repairProduct = {
+    id: "repair_" + Date.now(),
     name: `Repair - ${selectedType.label}`,
     type: "repair",
-    category: "Repair Service",
-    imageUrl: uploadedImage,
-    uploadedImage, // keep for consistency with customization
+    category: "Repair",
+    imageUrls: uploadedImages.length > 0 ? uploadedImages : [
+      "https://via.placeholder.com/150",
+    ],
+    uploadedImages,
     price: totalCost,
     qty,
-    selectedColor: selectedCover.label, // reuse this field for cover
-    selectedMaterial: selectedFrame.label,
     notes,
+    typeLabel: selectedType?.label || "Unknown",
+    coverMaterialLabel: selectedCover?.label || "None",
+    frameMaterialLabel: selectedFrame?.label || "None",
+    coverMaterialPrice: selectedCover?.value || 0,
+    frameMaterialPrice: selectedFrame?.value || 0,
+    total: totalCost,
+    status: "processing",
+    userId: user?.uid,
+    contactEmail: user?.email,
+    createdAt: new Date().toISOString(),
   };
 
-  console.log("Navigating to Checkout with:", repairOrder);
+  // ✅ Pass it like customization
+  navigation.navigate("CheckoutPage", {
+  product: { ...repairProduct, isRepair: true },
+});
+};
 
-  navigation.navigate("CheckoutPage", { product: repairOrder });
+const handleQtyChange = (newQty) => {
+  if (newQty < 1) return;
+  setQty(newQty);
 };
 
 
@@ -118,30 +156,58 @@ export default function Repair({ navigation }) {
 
         {/* IMAGE UPLOAD */}
         <View style={styles.imageBox}>
-          <Image
-            source={
-              uploadedImage
-                ? { uri: uploadedImage }
-                : require("../assets/chairs.png") // 👈 placeholder image
-            }
-            style={styles.mainImage}
-          />
+  <Text style={styles.imageSectionTitle}>UPLOAD DAMAGE PHOTOS</Text>
 
-          {uploadedImage ? (
-            <TouchableOpacity
-              style={[styles.uploadBtn, { backgroundColor: "#B22222" }]}
-              onPress={() => setUploadedImage(null)}
-            >
-              <Ionicons name="trash-outline" size={18} color="#fff" />
-              <Text style={styles.uploadText}>Remove Photo</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={styles.uploadBtn} onPress={handleUploadImage}>
-              <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-              <Text style={styles.uploadText}>Upload Damage Photo</Text>
-            </TouchableOpacity>
-          )}
+  <View style={styles.imageGrid}>
+    {uploadedImages.length > 0 ? (
+      uploadedImages.map((img, index) => (
+        <View key={index} style={styles.imageCard}>
+          <Image source={{ uri: img }} style={styles.imageThumb} />
+          <TouchableOpacity
+            style={styles.removeBtn}
+            onPress={() =>
+              setUploadedImages((prev) => prev.filter((_, i) => i !== index))
+            }
+          >
+            <Ionicons name="close-circle" size={22} color="#B22222" />
+          </TouchableOpacity>
         </View>
+      ))
+    ) : (
+      <Image
+        source={require("../assets/chairs.png")}
+        style={styles.placeholderImage}
+      />
+    )}
+  </View>
+
+  <TouchableOpacity
+  style={[
+    styles.uploadBtn,
+    uploadedImages.length >= 3 || uploading ? { backgroundColor: "#ccc" } : {},
+  ]}
+  onPress={handleSelectImages}
+  disabled={uploadedImages.length >= 3 || uploading}
+>
+  {uploading ? (
+    <ActivityIndicator size="small" color="#fff" />
+  ) : (
+    <>
+      <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+      <Text style={styles.uploadText}>
+        {uploadedImages.length >= 3
+          ? "Image Limit Reached (3/3)"
+          : uploadedImages.length > 0
+          ? `Add More (${uploadedImages.length}/3)`
+          : "Upload Damage Photos"}
+      </Text>
+    </>
+  )}
+</TouchableOpacity>
+
+</View>
+
+
 
         {/* TYPE SELECTION */}
         <View style={styles.section}>
@@ -378,4 +444,74 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   buyNowText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  imagePreviewContainer: {
+  marginRight: 10,
+  position: "relative",
+},
+previewImage: {
+  width: 100,
+  height: 100,
+  borderRadius: 10,
+},
+removeBtn: {
+  position: "absolute",
+  top: -5,
+  right: -5,
+  backgroundColor: "#fff",
+  borderRadius: 50,
+  elevation: 2,
+},
+imageSectionTitle: {
+  fontWeight: "700",
+  color: "#1B3D36",
+  fontSize: 15,
+  marginBottom: 10,
+  alignSelf: "flex-start",
+},
+
+imageGrid: {
+  flexDirection: "row",
+  flexWrap: "wrap",
+  justifyContent: "flex-start",
+  gap: 10,
+  marginBottom: 12,
+  width: "100%",
+},
+
+imageCard: {
+  width: "30%",
+  aspectRatio: 1,
+  borderRadius: 10,
+  overflow: "hidden",
+  backgroundColor: "#f4f4f4",
+  position: "relative",
+  elevation: 2,
+},
+
+imageThumb: {
+  width: "100%",
+  height: "100%",
+  resizeMode: "cover",
+  borderRadius: 10,
+},
+
+placeholderImage: {
+  width: "100%",
+  height: 200,
+  borderRadius: 10,
+  resizeMode: "contain",
+  marginBottom: 10,
+},
+
+removeBtn: {
+  position: "absolute",
+  top: 4,
+  right: 4,
+  backgroundColor: "#fff",
+  borderRadius: 50,
+  padding: 2,
+  elevation: 3,
+},
+
+
 });

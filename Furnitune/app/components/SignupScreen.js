@@ -9,9 +9,13 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { auth, db } from "./firebaseConfig";
-import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+import { 
+  createUserWithEmailAndPassword, 
+  sendEmailVerification, 
+  updateProfile,
+  signOut,
+} from "firebase/auth";
 import { setDoc, doc } from "firebase/firestore";
-
 
 export default function SignupScreen({ navigation }) {
   const [firstName, setFirstName] = useState("");
@@ -23,40 +27,65 @@ export default function SignupScreen({ navigation }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleSignup = async () => {
-  if (!firstName || !lastName || !email || !password || !confirmPassword) {
-    alert("Please fill in all fields.");
-    return;
-  }
-  if (password !== confirmPassword) {
-    alert("Passwords do not match.");
-    return;
-  }
+    // 1. Validation
+    if (!firstName || !lastName || !email || !password || !confirmPassword) {
+      alert("Please fill in all fields.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      alert("Passwords do not match.");
+      return;
+    }
 
-  try {
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
+    try {
+      // 2. Create User (This auto-logs them in)
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-    await sendEmailVerification(user); // ✅ Sends clickable verification link
+      // 3. Update Auth Profile
+      await updateProfile(user, {
+        displayName: `${firstName} ${lastName}`,
+        photoURL: "https://via.placeholder.com/150", 
+      });
 
-    await setDoc(doc(db, "users", user.uid), {
-      name: `${firstName} ${lastName}`,
-      email,
-      uid: user.uid,
-      verified: false,
-    });
+      // 4. Send Verification
+      await sendEmailVerification(user);
 
-    alert("Verification email sent! Please check your inbox.");
-    navigation.replace("EmailVerification");
-  } catch (error) {
-    alert(error.message);
-    console.error(error);
-  }
-};
+      // 5. Save to Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        createdAt: new Date(),
+        email: email,
+        emailVerified: false,
+        name: `${firstName} ${lastName}`,
+        photo: "https://via.placeholder.com/150",
+        provider: "email",
+        role: "customer",
+        source: "mobile",
+        uid: user.uid,
+        updatedAt: new Date(),
+      });
 
+      // ---------------------------------------------------------
+      // 6. FIX: FORCE SIGN OUT IMMEDIATELY
+      // This kills the auto-session. The user must now log in manually.
+      // ---------------------------------------------------------
+      await auth.signOut(); 
+
+      alert("Verification email sent! Please check your inbox and log in.");
+      
+      // Navigate to Login instead of EmailVerification, 
+      // or keep EmailVerification if that screen just tells them to check email.
+      navigation.navigate("LoginPage"); 
+
+    } catch (error) {
+      console.error(error);
+      alert(error.message);
+    }
+  };
 
   return (
     <ImageBackground
-      source={require("../assets/loginbg.png")} // replace with your bg
+      source={require("../assets/loginbg.png")}
       style={styles.container}
       resizeMode="cover"
     >
@@ -64,7 +93,7 @@ export default function SignupScreen({ navigation }) {
         {/* Title */}
         <Text style={styles.title}>CREATE YOUR ACCOUNT</Text>
 
-        {/* Name fields */} 
+        {/* Name fields */}
         <View style={styles.row}>
           <TextInput
             style={[styles.input, styles.halfInput]}
@@ -143,7 +172,7 @@ export default function SignupScreen({ navigation }) {
         </TouchableOpacity>
 
         {/* Already have an account */}
-        <TouchableOpacity onPress={() => navigation.navigate("")}>
+        <TouchableOpacity onPress={() => navigation.navigate("LoginPage")}>
           <Text style={styles.loginText}>
             Already have an account? <Text style={styles.loginLink}>Log In</Text>
           </Text>

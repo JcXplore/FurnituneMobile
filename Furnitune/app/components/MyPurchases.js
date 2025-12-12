@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react"; // ✅ Added useCallback
 import {
   View,
   Text,
@@ -7,7 +7,8 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
-  Alert, // ✅ add this
+  Alert,
+  RefreshControl, // ✅ Added RefreshControl
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -15,29 +16,29 @@ import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, query, where, getDocs, doc, updateDoc  } from "firebase/firestore";
 import { app } from "./firebaseConfig";
 
-const db = getFirestore(app);
-const auth = getAuth(app);
-
 export default function MyPurchases({ navigation }) {
   // 🔹 Default = “all” lowercase (for Firestore match)
   const [selected, setSelected] = useState("all");
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false); // ✅ Refresh state
+
+  const db = getFirestore(app);
+  const auth = getAuth(app);
 
   // 🔹 Filters with key-label pairs
   const filters = [
-  { label: "ALL", key: "all" },
-  { label: "PROCESSING ORDER", key: "processing" },
-  { label: "PREPARING", key: "preparing" },
-  { label: "TO SHIP", key: "to_ship" },
-  { label: "TO RECEIVE", key: "to_receive" },
-  { label: "TO RATE", key: "to_rate" },
-  { label: "COMPLETED", key: "completed" },
-  { label: "RETURN/REFUND", key: "return/refund" },
-  { label: "CANCELLED", key: "cancelled" },
-];
-
+    { label: "ALL", key: "all" },
+    { label: "PROCESSING ORDER", key: "processing" },
+    { label: "PREPARING", key: "preparing" },
+    { label: "TO SHIP", key: "to_ship" },
+    { label: "TO RECEIVE", key: "to_receive" }, 
+    { label: "TO RATE", key: "to_rate" },
+    { label: "COMPLETED", key: "completed" },
+    { label: "RETURN/REFUND", key: "return/refund" },
+    { label: "CANCELLED", key: "cancelled" },
+  ];
 
   // 🔹 Load current user
   useEffect(() => {
@@ -47,51 +48,126 @@ export default function MyPurchases({ navigation }) {
     return unsubscribe;
   }, []);
 
-  // 🔹 Fetch orders whenever user or filter changes
-  useEffect(() => {
-    const fetchOrders = async () => {
-      if (!userId) return;
-      try {
-        setLoading(true);
-        const collectionsToFetch = ["orders", "custom_orders", "repairs"];
-        let allOrders = [];
+  // ---------------------------------------------------------
+  // 🔹 REFACTORED: Data Fetching Function
+  // ---------------------------------------------------------
+  const loadOrders = useCallback(async (isRefreshing = false) => {
+    if (!userId) return;
+    
+    // Only show the big center spinner on initial load, not on pull-to-refresh
+    if (!isRefreshing) setLoading(true);
 
-        for (const col of collectionsToFetch) {
-          let q;
-          if (selected === "all") {
-            q = query(collection(db, col), where("userId", "==", userId));
-          } else {
-            q = query(
-              collection(db, col),
-              where("userId", "==", userId),
-              where("status", "==", selected.toLowerCase())
-            );
+    try {
+      const collectionsToFetch = ["orders", "custom_orders", "repairs"];
+      let rawOrders = [];
 
-          }
-
-          const snapshot = await getDocs(q);
-          const data = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-            source: col,
-          }));
-          allOrders = [...allOrders, ...data];
+      for (const col of collectionsToFetch) {
+        let q;
+        if (selected === "all") {
+          q = query(collection(db, col), where("userId", "==", userId));
+        } else {
+          q = query(
+            collection(db, col),
+            where("userId", "==", userId),
+            where("status", "==", selected.toLowerCase())
+          );
         }
 
-        // Sort by date (latest first)
-        allOrders.sort(
-          (a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)
-        );
-        setOrders(allOrders);
-      } catch (error) {
-        console.error("🔥 Error fetching orders:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
+        const snapshot = await getDocs(q);
+        const data = snapshot.docs.map((doc) => {
+          const d = doc.data();
 
-    fetchOrders();
-  }, [userId, selected]);
+          // 🧠 Custom Orders Collection Mapped to UI format
+          if (col === "custom_orders") {
+            return {
+              id: doc.id,
+              orderId: d.orderId || doc.id,
+              ...d,
+              source: col,
+              items: [{
+                name: d.productTitle || "Custom Furniture",
+                image: (Array.isArray(d.images) && d.images[0]) || d.thumbnail || "https://via.placeholder.com/150",
+                qty: 1,
+                price: d.priceBreakdown?.totalPHP || d.unitPrice || 0,
+                selectedColor: d.cover?.color,
+                selectedMaterial: d.cover?.materialType,
+                additionals: Array.isArray(d.additionals) ? d.additionals.join(", ") : d.additionals
+              }],
+              total: d.total || d.priceBreakdown?.totalPHP || d.unitPrice || 0,
+              createdAt: d.createdAt,
+            };
+          }
+
+          // 🛠 Repairs Collection Mapped to UI format
+          if (col === "repairs") {
+            return {
+              id: doc.id,
+              orderId: d.repairId || doc.id,
+              ...d,
+              source: col,
+              items: [{
+                name: `Repair - ${d.typeLabel || "Furniture"}`,
+                image: (Array.isArray(d.images) && d.images[0]) || "https://via.placeholder.com/150",
+                qty: 1,
+                price: Number(d.total || 0),
+              }],
+              total: Number(d.total || 0),
+              createdAt: d.createdAt,
+            };
+          }
+
+          // 📦 Regular Orders Collection Mapped to UI format
+          return {
+            id: doc.id,
+            orderId: d.orderId || doc.id,
+            ...d,
+            source: col,
+            items: d.items?.map((item) => ({
+              ...item,
+              name: item.title || item.name || d.productTitle || "Product",
+              image: item.image || item.imageUrl || d.product?.imageUrl || "https://via.placeholder.com/150",
+            })),
+            createdAt: d.createdAt,
+          };
+        });
+
+        rawOrders = [...rawOrders, ...data];
+      }
+
+      // Deduplicate by "orderId"
+      const uniqueMap = new Map();
+      for (const order of rawOrders) {
+          const uniqueKey = order.orderId || order.id;
+          if (!uniqueMap.has(uniqueKey)) {
+              uniqueMap.set(uniqueKey, order);
+          }
+      }
+      const finalOrders = Array.from(uniqueMap.values());
+
+      // Sort newest first
+      finalOrders.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+      setOrders(finalOrders);
+
+    } catch (error) {
+      console.error("🔥 Error fetching orders:", error);
+    } finally {
+      if (!isRefreshing) setLoading(false);
+    }
+  }, [userId, selected]); // Dependencies for useCallback
+
+  // 🔹 Initial Fetch
+  useEffect(() => {
+    loadOrders(false);
+  }, [loadOrders]);
+
+  // 🔹 Refresh Handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadOrders(true);
+    setRefreshing(false);
+  }, [loadOrders]);
+
 
   // 🔹 Status badge color
   const getStatusColor = (status) => {
@@ -153,169 +229,228 @@ export default function MyPurchases({ navigation }) {
       {loading ? (
         <ActivityIndicator size="large" color="#2c6e49" style={{ marginTop: 40 }} />
       ) : orders.length === 0 ? (
-        <View style={styles.emptyState}>
+        <ScrollView 
+            contentContainerStyle={styles.emptyState}
+            refreshControl={ // ✅ Allows refreshing even when empty
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#2c6e49"]} />
+            }
+        >
           <Ionicons name="cube-outline" size={70} color="#ccc" />
           <Text style={styles.noOrders}>No orders found under this category</Text>
-        </View>
+        </ScrollView>
       ) : (
         <ScrollView
-  style={styles.ordersList}
-  keyboardShouldPersistTaps="handled"
-  showsVerticalScrollIndicator={false}
-  nestedScrollEnabled={true}
->
-
-          {orders.map((order) => (
-  <View key={order.id} style={styles.orderCard}>
-    {/* 🔹 Main content tap area */}
-    <TouchableOpacity
-      activeOpacity={0.9}
-      onPress={() =>
-        navigation.navigate("OrderPage", {
-          orderId: order.id,
-          source: order.source,
-          
-        })
-      }
-    >
-      {/* Header */}
-      <View style={styles.cardHeader}>
-        <Text style={styles.storeName}>FURNITUNE</Text>
-        <View
-          style={[
-            styles.statusBadge,
-            { backgroundColor: getStatusColor(order.status) },
-          ]}
+          style={styles.ordersList}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled={true}
+          // ✅ Attach Refresh Control here
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={["#2c6e49"]}
+              tintColor="#2c6e49"
+            />
+          }
         >
-          <Text style={styles.statusBadgeText}>
-            {order.status?.toUpperCase().replace(/_/g, " ")}
-          </Text>
-        </View>
-      </View>
-
-      {/* Products */}
-      {order.items?.map((item, i) => (
-        <View key={i} style={styles.productRow}>
-          <Image source={{ uri: item.imageUrl }} style={styles.productImg} />
-          <View style={styles.productInfo}>
-            <Text style={styles.productName}>{item.name}</Text>
-            {item.selectedColor && (
-              <Text style={styles.variation}>Color: {item.selectedColor}</Text>
-            )}
-            {item.selectedSize && (
-              <Text style={styles.variation}>Size: {item.selectedSize}</Text>
-            )}
-            <Text style={styles.qty}>x{item.qty}</Text>
-          </View>
-          <Text style={styles.price}>₱{item.price?.toLocaleString()}</Text>
-        </View>
-      ))}
-
-      {/* Divider */}
-      <View style={styles.divider} />
-
-      {/* Total */}
-      <View style={styles.totalRow}>
-        <Text style={styles.totalLabel}>Order Total:</Text>
-        <Text style={styles.totalPrice}>
-          ₱{order.total?.toLocaleString() || "0"}
-        </Text>
-      </View>
-    </TouchableOpacity>
-
-    {/* 🔹 Action Buttons (outside touch area) */}
-    <View style={styles.actionRow}>
-      <TouchableOpacity style={[styles.actionBtn, styles.outlineBtn]}>
-        <Ionicons name="chatbubbles-outline" size={14} color="#2c6e49" />
-        <Text style={styles.outlineText}>Contact Seller</Text>
-      </TouchableOpacity>
-
-      {/* ✅ Cancel Order Button */}
-      {/* ✅ Cancel Order Button */}
-{(() => {
-  const currentStatus = (order.status || "").toLowerCase();
-  const lockedStatuses = [
-  "preparing",
-  "to_ship",
-  "to_receive",
-  "to_rate",
-  "completed",
-  "return/refund",
-  "cancelled", // ✅ added
-];
-
-  const isLocked = lockedStatuses.includes(currentStatus);
-
-  return (
-    <TouchableOpacity
-      activeOpacity={0.9}
-      disabled={isLocked} // ✅ prevents clicking when locked
-      style={[
-        styles.actionBtn,
-        styles.cancelBtn,
-        isLocked && styles.disabledBtn, // ✅ gray out button
-      ]}
-      onPress={async () => {
-        if (isLocked) {
-          Alert.alert(
-            "⚠️ Not Allowed",
-            "This order can no longer be cancelled."
-          );
-          return;
-        }
-
-        Alert.alert(
-          "Cancel Order",
-          "Are you sure you want to cancel this order?",
-          [
-            { text: "No", style: "cancel" },
-            {
-              text: "Yes, Cancel",
-              style: "destructive",
-              onPress: async () => {
-                try {
-                  const orderRef = doc(db, order.source, order.id);
-                  await updateDoc(orderRef, { status: "cancelled" });
-
-                  Alert.alert(
-                    "✅ Order Cancelled",
-                    "Your order has been successfully cancelled."
-                  );
-
-                  // Instantly update UI
-                  setOrders((prev) =>
-                    prev.map((o) =>
-                      o.id === order.id ? { ...o, status: "cancelled" } : o
-                    )
-                  );
-                } catch (error) {
-                  console.error("Error cancelling order:", error);
-                  Alert.alert(
-                    "❌ Failed",
-                    "Could not cancel order. Please try again later."
-                  );
+          {orders.map((order) => (
+            <View key={order.id} style={styles.orderCard}>
+              {/* 🔹 Main content tap area */}
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() =>
+                  navigation.navigate("OrderPage", {
+                    orderId: order.id,
+                    source: order.source,
+                    onStatusChange: (newStatus) => {
+                      setOrders((prev) =>
+                        prev.map((o) =>
+                          o.id === order.id ? { ...o, status: newStatus } : o
+                        )
+                      );
+                    },
+                  })
                 }
-              },
-            },
-          ]
-        );
-      }}
-    >
-      <Text
-        style={[
-          styles.actionText,
-          isLocked && styles.disabledText, // ✅ dim text when disabled
-        ]}
-      >
-        Cancel Order
-      </Text>
-    </TouchableOpacity>
-  );
-})()}
- </View>
-  </View>
-))}
+              >
+                {/* Header */}
+                <View style={styles.cardHeader}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={styles.storeName}>FURNITUNE</Text>
 
+                    {/* 🔹 Label for order type */}
+                    <View
+                      style={[
+                        styles.typeBadge,
+                        order.source === "custom_orders"
+                          ? { backgroundColor: "#6c5ce7" } // purple for customization
+                          : order.source === "repairs"
+                          ? { backgroundColor: "#e17055" } // orange for repairs
+                          : { backgroundColor: "#00b894" }, // green for standard
+                      ]}
+                    >
+                      <Text style={styles.typeBadgeText}>
+                        {order.source === "custom_orders"
+                          ? "CUSTOM ORDER"
+                          : order.source === "repairs"
+                          ? "REPAIR"
+                          : "CATALOG"}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      { backgroundColor: getStatusColor(order.status) },
+                    ]}
+                  >
+                    <Text style={styles.statusBadgeText}>
+                      {order.status?.toUpperCase().replace(/_/g, " ")}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Products */}
+                {order.items?.map((item, i) => (
+                  <View key={i} style={styles.productRow}>
+                    <Image
+                      source={{
+                        uri:
+                          item.image ||
+                          item.imageUrl ||
+                          order.repairImageUrl ||
+                          (order.images && order.images[0]) ||
+                          "https://via.placeholder.com/150"
+                      }}
+                      style={styles.productImg}
+                    />
+
+                    <View style={styles.productInfo}>
+                      <Text style={styles.productName} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      {item.selectedColor && (
+                        <Text style={styles.variation}>Color: {item.selectedColor}</Text>
+                      )}
+                      {item.selectedMaterial && (
+                        <Text style={styles.variation}>Material: {item.selectedMaterial}</Text>
+                      )}
+                      {item.selectedSize && (
+                        <Text style={styles.variation}>Size: {item.selectedSize}</Text>
+                      )}
+                      {item.additionals && (
+                        <Text style={styles.variation}>Additionals: {item.additionals}</Text>
+                      )}
+                      <Text style={styles.qty}>x{item.qty}</Text>
+                    </View>
+                    <Text style={styles.price}>₱{item.price?.toLocaleString()}</Text>
+                  </View>
+                ))}
+
+                {/* Divider */}
+                <View style={styles.divider} />
+
+                {/* Total */}
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Order Total:</Text>
+                  <Text style={styles.totalPrice}>
+                    ₱{order.total?.toLocaleString() || "0"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* 🔹 Action Buttons (outside touch area) */}
+              <View style={styles.actionRow}>
+                {(() => {
+                  const currentStatus = String(order.status || "").trim().toLowerCase();
+                  const lockedStatuses = [
+                    "preparing",
+                    "in preparation",
+                    "to ship",
+                    "to_ship",
+                    "toship",
+                    "to receive",
+                    "to_receive",
+                    "toreceive",
+                    "completed",
+                    "cancelled",
+                    "return/refund",
+                    "to_rate",
+                    "refund"
+                  ];
+
+                  const isLocked = lockedStatuses.includes(currentStatus);
+
+                  return (
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      disabled={isLocked}
+                      style={[
+                        styles.actionBtn,
+                        styles.cancelBtn,
+                        isLocked && styles.disabledBtn,
+                      ]}
+                      onPress={async () => {
+                        if (isLocked) {
+                          Alert.alert(
+                            "⚠️ Not Allowed",
+                            "This order can no longer be cancelled."
+                          );
+                          return;
+                        }
+
+                        Alert.alert(
+                          "Cancel Order",
+                          "Are you sure you want to cancel this order?",
+                          [
+                            { text: "No", style: "cancel" },
+                            {
+                              text: "Yes, Cancel",
+                              style: "destructive",
+                              onPress: async () => {
+                                try {
+                                  const orderRef = doc(db, order.source, order.id);
+                                  await updateDoc(orderRef, { status: "cancelled" });
+
+                                  Alert.alert(
+                                    "✅ Order Cancelled",
+                                    "Your order has been successfully cancelled."
+                                  );
+
+                                  // Instantly update UI
+                                  setOrders((prev) =>
+                                    prev.map((o) =>
+                                      o.id === order.id ? { ...o, status: "cancelled" } : o
+                                    )
+                                  );
+                                } catch (error) {
+                                  console.error("Error cancelling order:", error);
+                                  Alert.alert(
+                                    "❌ Failed",
+                                    "Could not cancel order. Please try again later."
+                                  );
+                                }
+                              },
+                            },
+                          ]
+                        );
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.actionText,
+                          isLocked && styles.disabledText,
+                        ]}
+                      >
+                        Cancel Order
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })()}
+              </View>
+            </View>
+          ))}
         </ScrollView>
       )}
     </View>
@@ -438,29 +573,33 @@ const styles = StyleSheet.create({
   },
   outlineText: { color: "#2c6e49", fontWeight: "600", fontSize: 12 },
   actionText: { color: "#fff", fontWeight: "700", fontSize: 12 },
-  emptyState: { justifyContent: "center", alignItems: "center", marginTop: 80 },
+  emptyState: { flexGrow: 1, justifyContent: "center", alignItems: "center", marginTop: 80 },
   noOrders: { color: "#777", fontWeight: "600", marginTop: 10, fontSize: 13 },
   disabledBtn: {
-  backgroundColor: "#ccc", // gray background
-},
-disabledText: {
-  color: "#666", // muted gray text
-},
-disabledBtn: {
-  backgroundColor: "#ccc", // gray background
-},
-disabledText: {
-  color: "#666", // muted gray text
-},
-cancelBtn: {
-  backgroundColor: "#2c6e49",
-  borderRadius: 25,
-  paddingVertical: 8,
-  paddingHorizontal: 14,
-  zIndex: 999, // 👈 ensures it's on top of other touchables
-  elevation: 5, // 👈 fixes Android layering issue
-},
-
-
-
+    backgroundColor: "#ccc",
+  },
+  disabledText: {
+    color: "#666",
+  },
+  cancelBtn: {
+    backgroundColor: "#2c6e49",
+    borderRadius: 25,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    zIndex: 999,
+    elevation: 5,
+  },
+  typeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  typeBadgeText: {
+    fontSize: 10,
+    color: "#fff",
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
 });

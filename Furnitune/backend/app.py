@@ -14,6 +14,21 @@ from PIL import Image
 from sentence_transformers import SentenceTransformer
 import io
 
+
+
+
+def convert_gs_to_http(gs_url: str) -> str:
+    """Convert Firebase Storage gs:// URL into a public https://firebasestorage URL."""
+    if not gs_url or not gs_url.startswith("gs://"):
+        return gs_url
+    gs_url = gs_url.replace("gs://", "")
+    parts = gs_url.split("/", 1)
+    if len(parts) < 2:
+        return gs_url
+    bucket, path = parts
+    return f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path.replace('/', '%2F')}?alt=media"
+
+
 # Load FAISS + CLIP model once
 try:
     print("🔍 Loading FAISS index and embeddings...")
@@ -39,8 +54,20 @@ except Exception as e:
 
 
 # --- Initialize Firebase ---
-cred = credentials.Certificate("serviceAccountKey.json")
+import json, os
+from firebase_admin import credentials
+
+firebase_key_json = os.environ.get("FIREBASE_KEY")
+
+if firebase_key_json:
+    firebase_key = json.loads(firebase_key_json)
+    cred = credentials.Certificate(firebase_key)
+else:
+    print("⚠️ No FIREBASE_KEY env found — using local key (for dev) USING serviceAccountKey.json")
+    cred = credentials.Certificate("serviceAccountKey.json")
+
 firebase_admin.initialize_app(cred)
+
 db = firestore.client()
 
 # --- FastAPI App ---
@@ -71,49 +98,15 @@ CATEGORY_MAP = {
     "cabinets": "Cabinets",
 }
 
-# Put this near CATEGORY_MAP
-BAD_FEATURES_BY_CATEGORY = {
-    "Beds": {
-        "hasArmrest", "hasRecline", "hasWheels", "hasLumbarSupport",
-        "hasSwivel", "hasChaise", "hasSectional", "hasSofaBed"
-    },
-    "Chairs": set(),
-    "Sofas": set(),
-    "Tables": set(),
-    "Cabinets": set(),
-}
 
 def normalize_category_input(category: str) -> str:
     if not category:
         return category
     return CATEGORY_MAP.get(category.strip().lower(), category)
 
-
 # ======================================================
 # 🧩 EXTRACTOR FUNCTIONS
 # ======================================================
-def extract_colors(data: dict) -> List[str]:
-    colors = set()
-    if isinstance(data.get("options", {}).get("colors"), list):
-        for c in data["options"]["colors"]:
-            if isinstance(c, dict):
-                colors.add(c.get("label") or c.get("name") or c.get("id"))
-            elif isinstance(c, str):
-                colors.add(c)
-
-    for key in ["colorOptions", "availableColors", "colors"]:
-        if isinstance(data.get(key), list):
-            for v in data[key]:
-                if isinstance(v, dict):
-                    colors.add(v.get("name") or v.get("label") or v.get("id"))
-                elif isinstance(v, str):
-                    colors.add(v)
-
-    if data.get("color"):
-        colors.add(str(data["color"]))
-
-    return sorted(x for x in colors if x)
-
 
 def extract_sizes(data: dict) -> List[str]:
     sizes = set()
@@ -141,95 +134,126 @@ def extract_sizes(data: dict) -> List[str]:
 def extract_features(data: dict) -> List[str]:
     return [k for k, v in data.items() if k.startswith("has") and isinstance(v, bool) and v]
 
-
 # ======================================================
 # 🛋️ GET OPTIONS (color, size)
 # ======================================================
 @app.get("/get-options/{category}")
 async def get_options(category: str):
+    """
+    Return all size options for the given baseType (category).
+    This version removes color and fixes category matching (e.g., Bed → Beds).
+    """
     try:
         normalized = normalize_category_input(category)
-        docs = db.collection("products").where("baseType", "==", normalized).stream()
+        normalized_lower = normalized.lower()
 
-        color_set, size_set = set(), set()
-        for doc in docs:
-            data = doc.to_dict()
-            color_set.update(extract_colors(data))
-            size_set.update(extract_sizes(data))
+        # ✅ Fetch all products once
+        all_docs = [d.to_dict() for d in db.collection("products").stream()]
 
-        return {"colors": sorted(color_set), "sizes": sorted(size_set)}
+        # ✅ Match baseType more flexibly
+        docs = [
+            d for d in all_docs
+            if str(d.get("baseType", "")).strip().lower() == normalized_lower
+        ]
+
+        # 🔄 If still none found, try plural/singular form matching
+        if not docs:
+            docs = [
+                d for d in all_docs
+                if str(d.get("baseType", "")).strip().lower().rstrip("s") == normalized_lower.rstrip("s")
+            ]
+
+        if not docs:
+            return {"category": normalized, "sizes": []}
+
+        size_set = set()
+        for data in docs:
+            # ✅ Extract from nested options
+            sizes = (
+                data.get("options", {}).get("sizes")
+                or data.get("sizeOptions")
+                or data.get("availableSizes")
+                or data.get("sizes")
+                or []
+            )
+
+            for s in sizes:
+                if isinstance(s, dict):
+                    label = s.get("label") or s.get("id") or s.get("name")
+                    if label:
+                        size_set.add(label)
+                elif isinstance(s, str):
+                    size_set.add(s)
+
+        return {"category": normalized, "sizes": sorted(size_set)}
+
     except Exception as e:
+        print("❌ Error in get_options:", e)
         return {"error": str(e)}
-
-
-def humanize_feature_key(k: str) -> str:
-    # "hasCabinets" -> "With Cabinets"
-    if not k.startswith("has"):
-        return k
-    pretty = k[3:]  # drop "has"
-    # split CamelCase -> "Cabinets"
-    out = []
-    word = ""
-    for ch in pretty:
-        if ch.isupper() and word:
-            out.append(word)
-            word = ch
-        else:
-            word += ch
-    if word:
-        out.append(word)
-    return "With " + " ".join(out)
-
-
-
 
 # ======================================================
 # 🧠 GET ADDITIONALS (like hasCabinet, hasStorage)
 # ======================================================
-
 @app.get("/get-additionals/{category}")
 async def get_additionals(category: str):
     """
-    Return features (has*) that are TRUE for products in the selected category.
-    Uses a small deny-list to strip obviously irrelevant features.
+    Return TRUE 'has*' fields that are relevant for the category.
+    Filters out features that don't apply (appear <20% of the time).
     """
     try:
         normalized = normalize_category_input(category)
-        docs = []
-        for d in db.collection("products").stream():
-            data = d.to_dict()
-            if str(data.get("baseType", "")).strip().lower() == normalized.lower():
-                docs.append(d)
+        normalized_lower = normalized.lower()
+
+        # Fetch all products with matching baseType (Beds, Sofas, etc.)
+        all_docs = [d.to_dict() for d in db.collection("products").stream()]
+        docs = [
+            d for d in all_docs
+            if str(d.get("baseType", "")).strip().lower() == normalized_lower
+            or str(d.get("baseType", "")).strip().lower().rstrip("s") == normalized_lower.rstrip("s")
+        ]
 
         if not docs:
             return {"category": normalized, "additionals": [], "additionalsPretty": [], "additionalsMap": []}
 
-        bad = BAD_FEATURES_BY_CATEGORY.get(normalized, set())
-
-        # Count true has* fields
+        total_products = len(docs)
         feature_true_count = {}
-        for d in docs:
-            data = d.to_dict()
+
+        # Count TRUE occurrences of each "has*" field
+        for data in docs:
             for k, v in data.items():
-                if k.startswith("has") and isinstance(v, bool) and v and k not in bad:
+                if k.startswith("has") and isinstance(v, bool) and v:
                     feature_true_count[k] = feature_true_count.get(k, 0) + 1
 
         if not feature_true_count:
             return {"category": normalized, "additionals": [], "additionalsPretty": [], "additionalsMap": []}
 
-        sorted_keys = sorted(feature_true_count, key=lambda k: feature_true_count[k], reverse=True)
+        # ✅ Filter features by minimum 20% presence (can tweak threshold)
+        threshold = 0.2
+        filtered = {k: v for k, v in feature_true_count.items() if v / total_products >= threshold}
 
+        if not filtered:
+            return {"category": normalized, "additionals": [], "additionalsPretty": [], "additionalsMap": []}
+
+        # ✅ Sort by frequency
+        sorted_keys = sorted(filtered, key=lambda k: filtered[k], reverse=True)
+
+        # ✅ Prettify labels
         def pretty(k: str) -> str:
             label = re.sub(r"([A-Z])", r" \1", k[3:]).strip()
             return f"With {label}"
 
+        additionals_map = [{"key": k, "label": pretty(k)} for k in sorted_keys]
+
         return {
             "category": normalized,
-            "additionals": sorted_keys,                         # raw keys (e.g., hasCabinets)
+            "totalProducts": total_products,
+            "additionals": sorted_keys,
             "additionalsPretty": [pretty(k) for k in sorted_keys],
-            "additionalsMap": [{"key": k, "label": pretty(k)} for k in sorted_keys],
+            "additionalsMap": additionals_map,
         }
+
     except Exception as e:
+        print("❌ Error in get_additionals:", e)
         return {"error": str(e)}
 
 # ======================================================
@@ -237,73 +261,119 @@ async def get_additionals(category: str):
 # ======================================================
 @app.get("/get-products/{category}")
 async def get_products(category: str):
+    """
+    Return all products for the given category.
+    Handles plural/singular mismatches (e.g., Bed → Beds).
+    """
     try:
         normalized = normalize_category_input(category)
-        docs = db.collection("products").where("baseType", "==", normalized).stream()
+        normalized_lower = normalized.lower()
+
+        # 🔍 Fetch all products once
+        all_docs = [d for d in db.collection("products").stream()]
+
+        # ✅ Match baseType flexibly (plural/singular)
+        docs = [
+            d for d in all_docs
+            if str(d.to_dict().get("baseType", "")).strip().lower() == normalized_lower
+            or str(d.to_dict().get("baseType", "")).strip().lower().rstrip("s") == normalized_lower.rstrip("s")
+        ]
+
+        if not docs:
+            return {"products": []}
 
         products = []
         for doc in docs:
             data = doc.to_dict()
             products.append({
-                "id": doc.id,
-                "name": data.get("name") or data.get("id") or doc.id,
+                "id": data.get("id") or doc.id,
+                "name": data.get("name") or "Unnamed Product",
                 "price": data.get("basePrice", "N/A"),
                 "description": data.get("description", "No description available."),
-                "colors": extract_colors(data),
                 "sizes": extract_sizes(data),
                 "features": extract_features(data),
                 "style": data.get("style", "N/A"),
                 "rating": data.get("ratingAvg", "N/A"),
                 "reviews": data.get("reviewsCount", 0),
-                "thumbnail": data.get("thumbnail") or data.get("defaultImagePath"),
+                "thumbnail": convert_gs_to_http(data.get("thumbnail") or data.get("defaultImagePath")),
             })
-        return {"products": products}
-    except Exception as e:
-        return {"error": str(e)}
 
+        return {"products": products}
+
+    except Exception as e:
+        print("❌ Error in get_products:", e)
+        return {"error": str(e)}
 
 # ======================================================
 # 🎯 RECOMMEND PREFERENCE (filter by color, size, additionals)
 # ======================================================
 @app.post("/recommend-preference")
 async def recommend_preference(preferences: dict = Body(...)):
+    """
+    Recommend products based on category, size, and additional features.
+    Matches if at least one selected additional is present, and ranks results by relevance.
+    """
     try:
         category = normalize_category_input(preferences.get("category"))
-        selected_color = (preferences.get("color") or "").strip()
         selected_size = (preferences.get("size") or "").strip()
         selected_adds = preferences.get("additionals") or []
 
+        product_filter_ids = preferences.get("image_ids") or []
         query = db.collection("products")
-        if category:
-            query = query.where("baseType", "==", category)
+
+        if product_filter_ids:
+            # ✅ Only consider products from image-based recommendations
+            docs = [db.collection("products").document(pid).get() for pid in product_filter_ids]
+            product_docs = [doc for doc in docs if doc.exists]
+        else:
+            # ✅ Fall back to normal category query
+            if category:
+                query = query.where("baseType", "==", category)
+            product_docs = query.stream()
+
 
         candidates = []
+
         for doc in query.stream():
             data = doc.to_dict()
-            colors = extract_colors(data)
             sizes = extract_sizes(data)
             features = set(extract_features(data))
 
-            # Filter by color
-            if selected_color and selected_color not in colors:
-                continue
             # Filter by size
             if selected_size and selected_size not in sizes:
                 continue
-            # Filter by all selected additionals
-            if selected_adds and not set(selected_adds).issubset(features):
+
+            # Skip if no features selected and product has no has* fields
+            if selected_adds and not features:
                 continue
 
-            candidates.append({
-                "id": doc.id,
-                "name": data.get("name") or data.get("id") or doc.id,
-                "basePrice": data.get("basePrice"),
-                "defaultImagePath": data.get("thumbnail") or data.get("defaultImagePath"),
-            })
+            # Compute feature match score
+            match_count = len(set(selected_adds) & features)
+            total_possible = len(selected_adds)
+            score = match_count / total_possible if total_possible else 1
+
+            # Include product if there's at least one match
+            if match_count > 0 or not selected_adds:
+                candidates.append({
+                    "id": doc.id,
+                    "name": data.get("name") or data.get("id") or doc.id,
+                    "basePrice": data.get("basePrice"),
+                    "defaultImagePath": convert_gs_to_http(data.get("thumbnail") or data.get("defaultImagePath")),
+                    "matchScore": round(score, 2),
+                })
+
+        # Sort by match score (descending)
+        candidates = sorted(candidates, key=lambda x: x["matchScore"], reverse=True)
+
+        if not candidates:
+            return {"recommendations": []}
 
         return {"recommendations": candidates[:10]}
+
     except Exception as e:
+        print("❌ Error in /recommend-preference:", e)
         return {"error": str(e)}
+
 
 
 from fastapi import UploadFile, File
@@ -313,31 +383,115 @@ import shutil
 @app.post("/recommend-image")
 async def recommend_image(file: UploadFile = File(...)):
     """
-    Receives an uploaded image, encodes it using CLIP,
-    compares it to the FAISS index, and returns top similar products.
+    Receives an uploaded image, encodes it using CLIP (SentenceTransformer),
+    validates the vector, compares it to the FAISS index, and returns top similar products with image URLs.
     """
     try:
-        # Read and convert image
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents)).convert("RGB")
-
         if not clip_model or not index:
             return {"error": "Visual recommender not initialized."}
 
-        # Encode uploaded image using CLIP
-        query_vector = clip_model.encode([image])
-        query_vector = np.array(query_vector).astype("float32")
+        # Read uploaded bytes and create PIL image
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
 
-        # Search FAISS for top 5 nearest neighbors
-        k = 5
-        distances, indices = index.search(query_vector, k)
-        nearest_ids = [product_ids[i] for i in indices[0] if i < len(product_ids)]
+        # --- Encode image robustly with SentenceTransformer ---
+        try:
+            query_vec = clip_model.encode([image], convert_to_numpy=True, normalize_embeddings=False)
+        except TypeError:
+            query_vec = clip_model.encode([image])
 
-        print(f"✅ Found similar items for {file.filename}: {nearest_ids}")
+        # Ensure numpy array, float32, 2D
+        query_vec = np.array(query_vec)
+        if query_vec.ndim == 1:
+            query_vec = query_vec.reshape(1, -1)
+        query_vec = query_vec.astype("float32")
+
+        # Sanity logs for debugging
+        print("✅ recommend-image: query_vec shape:", query_vec.shape, "dtype:", query_vec.dtype)
+        print("✅ recommend-image: sample values:", query_vec[0][:6].tolist())
+
+        # --- FAISS search ---
+        k = min(5, len(product_ids)) if len(product_ids) > 0 else 0
+        if k == 0:
+            return {"message": "No products in index.", "recommendations": []}
+
+        distances, indices = index.search(query_vec, k)
+        distances = distances.tolist()
+        indices = indices.tolist()
+        nearest_ids_raw = [product_ids[i] for i in indices[0] if i < len(product_ids)]
+
+        # remove duplicates but keep order
+        nearest_ids = []
+        seen = set()
+        for pid in nearest_ids_raw:
+            if pid not in seen:
+                nearest_ids.append(pid)
+                seen.add(pid)
+
+       # Find the best variant for each product (closest image among its variants)
+        def pick_best_variant(product_id, query_vec):
+            best = None
+            best_score = float("inf")  # FAISS distance = smaller = more similar
+            
+            for img_data in embeddings.get(product_id, {}).get("images", []):
+                emb = img_data.get("embedding")
+                url = img_data.get("url")
+                if emb is None or url is None:
+                    continue
+
+                emb_np = np.array(emb).astype("float32")
+                emb_np = emb_np.reshape(1, -1)
+
+                dist = np.linalg.norm(query_vec - emb_np)
+                if dist < best_score:
+                    best_score = dist
+                    best = img_data
+
+            return best
+
+
+                
+        print(f"✅ Found similar items for {file.filename}: ids={nearest_ids} distances={distances[0]}")
+        
+        
+
+        # ✅ NEW: Fetch product data for each matched ID
+        results = []
+        for pid in nearest_ids:
+            doc_ref = db.collection("products").document(pid)
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                # results.append({
+                #     "id": pid,
+                #     "name": data.get("name") or pid,
+                #     "basePrice": data.get("basePrice"),
+                #     "thumbnail": convert_gs_to_http(data.get("thumbnail") or data.get("defaultImagePath")),
+                #     "style": data.get("style"),
+                #     "rating": data.get("ratingAvg", 0),
+                #     "reviews": data.get("reviewsCount", 0),
+                # })
+                variant = pick_best_variant(pid, query_vec)
+
+                results.append({
+                    "id": pid,
+                    "name": data.get("name") or pid,
+                    "size": variant.get("size") if variant else None,
+                    "color": variant.get("color") if variant else None,
+                    "image": convert_gs_to_http(variant.get("url")) if variant else convert_gs_to_http(data.get("thumbnail")),
+                    "basePrice": data.get("basePrice"),
+                    "style": data.get("style"),
+                })
+
 
         return {
             "message": "Image analyzed successfully!",
-            "recommendations": nearest_ids,
+            "recommendations": results,  # ✅ Return full product data
+            "debug": {
+                "num_products_indexed": len(product_ids),
+                "returned_k": k,
+                "distances": distances[0],
+            },
         }
 
     except Exception as e:
@@ -352,3 +506,5 @@ async def recommend_image(file: UploadFile = File(...)):
 @app.get("/")
 def root():
     return {"status": "Recommender system running successfully 🚀"}
+
+

@@ -48,10 +48,119 @@ export default function ProductDetailsScreen({ route, navigation }) {
   const storage = getStorage();
   const FALLBACK_IMAGE =
     "https://via.placeholder.com/600x400?text=No+Image+Available";
-
+  const [sizeAdditions, setSizeAdditions] = useState({});
+  const [measurementImage, setMeasurementImage] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
 
+  const normalizeSizeForPrice = (s) =>
+  (s || "").toLowerCase().replace(/\s+/g, "-"); 
+  
+  useEffect(() => {
+    async function update() {
+      const url = await resolveOptionImage(selectedColor, selectedSize);
+      if (url) setMainImage(url);
+    }
+    update();
+  }, [selectedColor, selectedSize, product]);
+
+  const resolveOptionImage = async (color, size) => {
+    if (!product) return null;
+
+    const colorKey = normalizeKey(color);
+const sizeKey = normalizeKey(size);
+
+    // Helper
+    const first = (arr) =>
+      Array.isArray(arr) ? arr.find((p) => p && !p.endsWith(".keep")) : null;
+
+    // -------------------------------
+    // 1️⃣ Check imagesByOption (COLOR + SIZE)
+    // -------------------------------
+    if (product.imagesByOption) {
+      const colorMap = product.imagesByOption[colorKey];
+      if (colorMap) {
+        // exact
+        if (colorMap[sizeKey]) return await convertUrl(first(colorMap[sizeKey]));
+
+        if (sizeKey === "cal-king") {
+          if (colorMap["king"]) {
+            const fallbackKing = first(colorMap["king"]);
+            if (fallbackKing) return await convertUrl(fallbackKing);
+          }
+        }
+
+        // any size under this color
+        const any = first(Object.values(colorMap).flat());
+        if (any) return await convertUrl(any);
+      }
+    }
+
+    // -------------------------------
+    // 2️⃣ Check imagesBySize (SIZE ONLY)
+    // -------------------------------
+    if (product.imagesBySize) {
+      // try exact size
+      if (product.imagesBySize[size]) {
+        return await convertUrl(first(product.imagesBySize[size]));
+      }
+
+      // try normalized variants
+      const sizeVariants = [
+        sizeKey,
+        sizeKey.replace(/\s+/g, ""), // "2 people" -> "2people"
+        sizeKey.replace("people", "p"), // "2 people" -> "2p"
+        sizeKey.replace(/[^0-9]/g, "") + "p", // "2" -> "2p"
+      ];
+
+      for (let key of sizeVariants) {
+        if (product.imagesBySize[key]) {
+          return await convertUrl(first(product.imagesBySize[key]));
+        }
+      }
+    }
+
+    // -------------------------------
+    // 3️⃣ Fallback: top-level images[]
+    // -------------------------------
+    if (images?.length) return images[0];
+
+    return FALLBACK_IMAGE;
+  };
+
+
+  // 🔄 Convert gs:// → https://
+  const convertUrl = async (p) => {
+    if (p.startsWith("gs://")) return await getImageUrl(p);
+    return normalizePath(p);
+  };
+
+
+  // 🔥 Auto-show measurement image based on selected size
+  useEffect(() => {
+    async function updateMeasurementImage() {
+      if (!product?.measurementImages) return;
+      if (!selectedSize) return;
+
+      // Lookup exact measurement image by label
+      const url = product.measurementImages[selectedSize];
+
+      if (!url) {
+        setMeasurementImage(null);
+        return;
+      }
+
+      const resolved = url.startsWith("gs://")
+        ? await getImageUrl(url)
+        : url;
+
+      setMeasurementImage(resolved);
+    }
+
+    updateMeasurementImage();
+  }, [selectedSize, product]);
+
+  
   useEffect(() => {
   if (!product?.id && !product?.productId) return;
 
@@ -62,14 +171,19 @@ export default function ProductDetailsScreen({ route, navigation }) {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
 
       // Filter locally: look inside items[] for productId match
-      const filtered = data.filter(
-        (r) =>
-          Array.isArray(r.items) &&
+      const filtered = data.filter((r) => {
+      const id = product.id || product.productId;
+      return (
+        (Array.isArray(r.productIds) && r.productIds.includes(id)) ||
+        (Array.isArray(r.items) &&
           r.items.some(
             (item) =>
-              item.productId === (product.id || product.productId)
-          )
+              item.productId === id ||
+              item.title?.toLowerCase().includes(product.name?.toLowerCase() || "")
+          ))
       );
+    });
+
 
       console.log("✅ Found reviews for this product:", filtered.length);
       setReviews(filtered);
@@ -116,35 +230,55 @@ export default function ProductDetailsScreen({ route, navigation }) {
     }
   };
 
+  const normalizeKey = (str = "") =>
+  str.toLowerCase()
+     .replace(/\s+/g, "")        // "3 Seater" → "3seater"
+     .replace(/-/g, "")        // "cal-king" or "cal king" → "calking"
+     .replace(/californiaking|cal-king|calking/g, "king");
 
   
   // 🔹 Resolve all product images (deduplicated)
-  const resolveProductImages = async (prod) => {
-    const candidateUris = [];
+  // ✅ Resolve ALL product images (images + imagesByOption), skip .keep, dedupe
+const resolveProductImages = async (prod) => {
+  const FALLBACK = FALLBACK_IMAGE;
+  const candidates = new Set();
 
-    const tryAdd = (uri) => {
-      if (uri && typeof uri === "string" && !candidateUris.includes(uri)) {
-        candidateUris.push(uri);
-      }
-    };
-
-    tryAdd(prod.defaultImagePath);
-    tryAdd(prod.thumbnail);
-    if (Array.isArray(prod.images)) {
-      prod.images.forEach((img) => tryAdd(img));
-    }
-
-    if (candidateUris.length === 0) candidateUris.push(FALLBACK_IMAGE);
-
-    const resolved = await Promise.all(
-      candidateUris.map(async (url) =>
-        url.startsWith("gs://") ? await getImageUrl(url) : normalizePath(url)
-      )
-    );
-
-    const unique = [...new Set(resolved.filter(Boolean))];
-    return unique.length ? unique : [FALLBACK_IMAGE];
+  const pushIfValid = (p) => {
+    if (!p || typeof p !== "string") return;
+    if (p.endsWith(".keep")) return; // ignore placeholders
+    candidates.add(p);
   };
+
+  // 1) top-level images first (your beds work because of this field)
+  if (Array.isArray(prod.images)) prod.images.forEach(pushIfValid);
+  pushIfValid(prod.defaultImagePath);               // then default
+  pushIfValid(prod.thumbnail);                      // last resort (still a real image path in your DB)
+
+  // 2) imagesByOption (colors -> sizes -> [paths])
+  if (prod.imagesByOption && typeof prod.imagesByOption === "object") {
+    Object.values(prod.imagesByOption).forEach((sizeMap) => {
+      if (!sizeMap || typeof sizeMap !== "object") return;
+      Object.values(sizeMap).forEach((arr) => {
+        if (Array.isArray(arr)) arr.forEach(pushIfValid);
+      });
+    });
+  }
+
+  // No real image? use placeholder
+  if (candidates.size === 0) return [FALLBACK];
+
+  // Convert gs:// → https:// (or normalize as-is)
+  const resolved = await Promise.all(
+    Array.from(candidates).map(async (url) => {
+      if (url.startsWith("gs://")) return await getImageUrl(url);
+      return normalizePath(url);
+    })
+  );
+
+  const unique = [...new Set(resolved.filter(Boolean))];
+  return unique.length ? unique : [FALLBACK];
+};
+
 
   useEffect(() => {
     let mounted = true;
@@ -191,13 +325,13 @@ export default function ProductDetailsScreen({ route, navigation }) {
         setImages(resolvedImages);
         setMainImage(resolvedImages[0] || FALLBACK_IMAGE);
         // Restore selected options if passed from cart
-        setSelectedColor(route?.params?.selectedColor || null);
-        setSelectedSize(route?.params?.selectedSize || null);
-
-
-        // 🚫 No auto-selection — user must manually choose
-        setSelectedSize(null);
-        setSelectedColor(null);
+        // ✅ Restore selected options from CartPage (if any)
+        if (route?.params?.selectedColor) {
+          setSelectedColor(route.params.selectedColor);
+        }
+        if (route?.params?.selectedSize) {
+          setSelectedSize(route.params.selectedSize);
+        }
 
 
 
@@ -214,73 +348,75 @@ export default function ProductDetailsScreen({ route, navigation }) {
   }, [incoming]);
 
   useEffect(() => {
-    async function loadSizePrices() {
-      try {
-        if (!product?.type && !product?.category) return;
-        const typeLabel = product.type || product.category;
-        const qRules = query(collection(db, "sizePriceRules"), where("type", "==", typeLabel));
-        const snapRules = await getDocs(qRules);
+  async function loadSizePrices() {
+    try {
+      if (!product?.type && !product?.category) return;
 
-        const priceMap = {};
-        snapRules.forEach((d) => {
-          const data = d.data();
-          const mode = (data.mode || "delta").toLowerCase();
-          const value = Number(data.value || 0);
-          const base = Number(product.basePrice || product.price || 0);
-          let price = base;
+      const typeLabel = (product.type || product.category || "").trim();
+      if (!typeLabel) return;
 
-          if (mode === "multiplier" || mode === "x" || mode === "mult")
-            price = Math.round(base * value);
-          else if (mode === "absolute")
-            price = value;
-          else
-            price = base + value;
+      const qRules = query(collection(db, "sizePriceRules"), where("type", "==", typeLabel));
+      const snapRules = await getDocs(qRules);
 
-          priceMap[data.size] = price;
-        });
+      const norm = (s) => (s || "").toLowerCase().trim();
+      const slug = (s) => norm(s).replace(/\s+/g, "-");
 
-        setSizePrices(priceMap);
-      } catch (e) {
-        console.warn("Error loading sizePriceRules:", e);
-      }
+      const priceMap = {};
+      const additionMap = {};
+
+      const base = Number(product.basePrice || product.price || 0);
+
+      snapRules.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (!data?.size) return;
+
+        const mode = (data.mode || "delta").toLowerCase();
+        const value = Number(data.value || 0);
+
+        let abs = base;
+        if (mode === "multiplier" || mode === "x" || mode === "mult")
+          abs = Math.round(base * (isNaN(value) ? 1 : value));
+        else if (mode === "absolute")
+          abs = isNaN(value) ? base : value;
+        else
+          abs = base + (isNaN(value) ? 0 : value);
+
+        const add = abs - base;
+
+        // store tolerant keys (exact, lowercase, slug)
+        priceMap[data.size] = abs;
+        priceMap[norm(data.size)] = abs;
+        priceMap[slug(data.size)] = abs;
+
+        additionMap[data.size] = add;
+        additionMap[norm(data.size)] = add;
+        additionMap[slug(data.size)] = add;
+      });
+
+      setSizePrices(priceMap);
+      setSizeAdditions(additionMap);
+
+      console.log("✅ Loaded size rules for", typeLabel, priceMap);
+    } catch (e) {
+      console.warn("⚠️ Error loading sizePriceRules:", e);
     }
+  }
 
-    loadSizePrices();
-    }, [product]);
+  loadSizePrices();
+}, [product]);
+
 
     useEffect(() => {
       if (!product) return;
 
       const base = Number(product.basePrice || product.price || 0);
-      const sizePrice = selectedSize ? sizePrices[selectedSize] || base : base;
+      const key = normalizeSizeForPrice(selectedSize);
+      const sizePrice = selectedSize ? sizePrices[key] || base : base;
       const total = sizePrice * qty;
 
       setTotalPrice(total);
     }, [product, selectedSize, sizePrices, qty]);
 
-
-
-
-
-  // 🔹 When color or size changes → update mainImage
-  useEffect(() => {
-    async function updateImageByOption() {
-      if (!product?.imagesByOption) return;
-      const color = selectedColor?.toLowerCase();
-      const size = selectedSize?.toLowerCase();
-
-      const colorMap = product.imagesByOption[color];
-      if (colorMap && colorMap[size]?.length) {
-        const firstPath = colorMap[size][0];
-        const url = firstPath.startsWith("gs://")
-          ? await getImageUrl(firstPath)
-          : normalizePath(firstPath);
-        setMainImage(url || FALLBACK_IMAGE);
-      }
-    }
-
-    updateImageByOption();
-  }, [selectedColor, selectedSize]);
 
   const increment = () => setQty((q) => Math.min(q + 1, 99));
   const decrement = () => setQty((q) => Math.max(q - 1, 1));
@@ -324,6 +460,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
       };
 
       await addDoc(cartRef, entry); // ✅ saves to /users/{uid}/cart
+      navigation.navigate("CartPage");
       Alert.alert("Added", "Item added to cart.");
     } catch (err) {
       console.error("Add to cart error:", err);
@@ -355,7 +492,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
       <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 150 }}
+        contentContainerStyle={{ paddingBottom: 210 }}
       >
         <Text style={styles.brand}>FURNITUNE</Text>
 
@@ -368,27 +505,6 @@ export default function ProductDetailsScreen({ route, navigation }) {
           />
         </View>
 
-        {/* 🔸 Thumbnails */}
-        {images.length > 1 && (
-          <FlatList
-            horizontal
-            data={images}
-            keyExtractor={(i, idx) => i + idx}
-            showsHorizontalScrollIndicator={false}
-            style={styles.thumbList}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => setMainImage(item)}
-                style={[
-                  styles.thumbWrap,
-                  mainImage === item && styles.thumbActive,
-                ]}
-              >
-                <Image source={{ uri: item }} style={styles.thumb} />
-              </TouchableOpacity>
-            )}
-          />
-        )}
 
         {/* 🔸 Info */}
         <View style={styles.infoRow}>
@@ -407,7 +523,7 @@ export default function ProductDetailsScreen({ route, navigation }) {
             <View style={styles.optionRow}>
               {product.sizes.map((s, i) => {
                 const label = s.label ?? s.id;
-                const price = sizePrices[label] || product.price || product.basePrice;
+                const price = sizePrices[label] || product.price || product.basePrice ;
 
                 return (
                   <TouchableOpacity
@@ -419,9 +535,30 @@ export default function ProductDetailsScreen({ route, navigation }) {
                     onPress={() => setSelectedSize(label)}
                   >
                     <Text style={styles.sizeText}>{label}</Text>
-                    <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
-                      ₱{price.toLocaleString()}
-                    </Text>
+                    {(() => {
+                      const norm = (s) => (s || "").toLowerCase().trim();
+                      const slug = (s) => norm(s).replace(/\s+/g, "-");
+
+                      const add =
+                        sizeAdditions[label] ??
+                        sizeAdditions[norm(label)] ??
+                        sizeAdditions[slug(label)] ??
+                        0;
+
+                      if (add === 0) return null; // hide "+₱0" for base
+
+                      const formatted =
+                        add > 0
+                          ? `+₱${add.toLocaleString()}`
+                          : `-₱${Math.abs(add).toLocaleString()}`;
+
+                      return (
+                        <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
+                          {formatted}
+                        </Text>
+                      );
+                    })()}
+
                   </TouchableOpacity>
                 );
               })}
@@ -469,15 +606,35 @@ export default function ProductDetailsScreen({ route, navigation }) {
             style={styles.input}
           />
         </View>
-
+        
         {/* 🔸 Description */}
         {product.description && (
-          <View style={styles.section}>
-            <Text style={styles.subTitle}>DESCRIPTION</Text>
-            <Text style={styles.description}>{product.description}</Text>
-          </View>
-        )}
+        <View style={styles.section}>
+          <Text style={styles.subTitle}>DESCRIPTION</Text>
+          <Text style={styles.description}>{product.description}</Text>
 
+          {/* 📏 Show measurement image only when size is selected */}
+          {measurementImage && (
+            <View style={{ marginTop: 12 }}>
+              <Text style={[styles.subTitle, { marginBottom: 6 }]}>
+                MEASUREMENT GUIDE ({selectedSize})
+              </Text>
+              <Image
+                source={{ uri: measurementImage }}
+                style={{
+                  width: "100%",
+                  height: 220,
+                  borderRadius: 12,
+                  backgroundColor: "#eee",
+                }}
+              />
+            </View>
+          )}
+        </View>
+      )}
+
+
+{/* 🔸 Product Reviews Section */}
 {/* 🔸 Product Reviews Section */}
 <View style={styles.section}>
   <Text style={styles.subTitle}>CUSTOMER REVIEWS</Text>
@@ -491,20 +648,40 @@ export default function ProductDetailsScreen({ route, navigation }) {
   ) : (
     reviews.map((rev, idx) => (
       <View key={idx} style={styles.reviewCard}>
+        {/* Header */}
         <View style={styles.reviewHeader}>
           <Ionicons name="person-circle-outline" size={28} color="#2c6e49" />
           <View>
-            <Text style={styles.reviewUser}>{rev.username}</Text>
+            <Text style={styles.reviewUser}>
+              {rev.userName || rev.username || "Anonymous"}
+            </Text>
             <Text style={styles.reviewDate}>
               {rev.createdAt?.toDate
-                ? rev.createdAt.toDate().toLocaleDateString()
+                ? rev.createdAt.toDate().toLocaleString()
                 : "—"}
             </Text>
           </View>
         </View>
-        <Text style={styles.reviewRating}>{"⭐".repeat(rev.rating || 0)}</Text>
+
+        {/* Rating */}
+        <Text style={styles.reviewRating}>
+          {"⭐".repeat(Math.round(rev.rating || 0)) || "No rating"}
+        </Text>
+
+        {/* Message */}
         {rev.message ? (
           <Text style={styles.reviewText}>{rev.message}</Text>
+        ) : null}
+
+        {/* Review Image */}
+        {rev.imageUrl ? (
+          <View style={{ marginTop: 8 }}>
+            <Image
+              source={{ uri: rev.imageUrl }}
+              style={styles.reviewImage}
+              contentFit="cover"
+            />
+          </View>
         ) : null}
       </View>
     ))
@@ -545,25 +722,29 @@ export default function ProductDetailsScreen({ route, navigation }) {
             <Ionicons name="cart-outline" size={22} color="#fff" />
           </TouchableOpacity>
 
-          {/* Customize */}
+          {/* Customize
           <TouchableOpacity
             style={[styles.addBtn, { flex: 1, backgroundColor: "#1b4332" }]}
             onPress={() =>
+              
               navigation.navigate("Customization", {
+                
                 product: {
                   id: product.id,
                   name: product.name,
                   imageUrl: mainImage,
                   price: product.price ?? product.basePrice ?? 0,
-                  selectedColor,
-                  selectedSize,
+                selectedColor,
+                selectedSize,
                 },
                 imageUrl: mainImage,
+                
               })
+              
             }
           >
             <Text style={styles.addBtnText}>CUSTOMIZE</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           {/* Buy Now */}
           <TouchableOpacity
@@ -591,12 +772,12 @@ export default function ProductDetailsScreen({ route, navigation }) {
                   id: product.id,
                   name: product.name,
                   imageUrl: mainImage,
-                  price: product.price ?? product.basePrice ?? 0,
+                  price: totalPrice || 0,
                   selectedColor,
                   selectedSize,
                   qty,
                   note,
-                  type: "standard"
+                  type: "catalog"
                 },
               });
             }}
@@ -758,7 +939,7 @@ buttonsRow: {
     justifyContent: "center",
     elevation: 3,
   },
-  addBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  addBtnText: { color: "#fff", fontWeight: "600", fontSize: 12 },
   iconBtn: {
   width: 50,
   height: 50,
@@ -771,22 +952,25 @@ buttonsRow: {
 },
 reviewCard: {
   backgroundColor: "#fff",
-  borderRadius: 10,
-  padding: 12,
+  borderRadius: 12,
+  padding: 14,
   marginBottom: 10,
   borderWidth: 1,
-  borderColor: "#eee",
+  borderColor: "#e8e8e8",
+  shadowColor: "#000",
+  shadowOpacity: 0.05,
+  shadowRadius: 4,
+  elevation: 2,
 },
 reviewHeader: {
   flexDirection: "row",
   alignItems: "center",
-  marginBottom: 6,
+  marginBottom: 4,
 },
-reviewUser: {
-  fontWeight: "700",
-  color: "#2c6e49",
-  fontSize: 13,
-},
+reviewUser: { fontWeight: "700", color: "#1b4332", fontSize: 13 },
+reviewDate: { color: "#888", fontSize: 11 },
+reviewRating: { fontSize: 13, marginVertical: 4 },
+reviewText: { fontSize: 13, color: "#333", lineHeight: 18 },
 reviewDate: {
   color: "#777",
   fontSize: 11,
@@ -801,5 +985,11 @@ reviewText: {
   lineHeight: 18,
 },
 
-
+reviewImage: {
+  width: "100%",
+  height: 180,
+  borderRadius: 10,
+  marginTop: 6,
+  backgroundColor: "#eee",
+},
 });

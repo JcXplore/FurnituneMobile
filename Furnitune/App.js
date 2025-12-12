@@ -32,6 +32,8 @@ import OrderPage from "./app/components/OrderPage";
 import SplashScreen from "./app/components/SplashScreen";
 import ForgotPassword from "./app/components/ForgotPassword";
 import EmailVerification from "./app/components/EmailVerification";
+import ChangePasswordNotice from "./app/components/ChangePasswordNotice";
+import ReturnRefundPage from "./app/components/ReturnRefundPage";
 
 const Stack = createStackNavigator();
 
@@ -69,7 +71,21 @@ export default function App() {
             )}
           </Stack.Screen>
 
-          
+          <Stack.Screen name="ReturnRefundPage">
+            {(props) => (
+              <LayoutWrapper>
+                <ReturnRefundPage {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
+
+          <Stack.Screen name="ChangePasswordNotice">
+            {(props) => (
+              <LayoutWrapper>
+                <ChangePasswordNotice {...props} />
+              </LayoutWrapper>
+            )}
+          </Stack.Screen>
 
           <Stack.Screen name="ChatbotPage">
             {(props) => (

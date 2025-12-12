@@ -9,17 +9,26 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Animated,
-  Easing,
-  Dimensions,
+  LayoutAnimation,
+  UIManager,
+  StatusBar,
+  SafeAreaView,
+  Dimensions
 } from "react-native";
 import axios from "axios";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
+// Ensure you have these in your .env or remove if hardcoding
 import { OPENROUTER_API_KEY, OPENROUTER_BASE_URL } from "@env";
 import furnituneData from "../assets/furnituneInfo.json";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+// Enable LayoutAnimation on Android
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+const BRAND_COLOR = "#2c6e49";
+const BG_COLOR = "#F5F7FA";
 
 const DEFAULT_FURNITUNE_INFO = `
 Furnitune is an e-commerce platform for Santos Upholstery.
@@ -28,60 +37,45 @@ and offer repair services even for items not purchased from us.
 `;
 
 const FAQS = [
-  "What are your business hours?",
-  "Do you accept furniture repair requests?",
-  "How can I customize my furniture order?",
-  "What payment methods do you accept?",
-  "Do you offer delivery tracking?",
+  "Business hours?",
+  "Do you do repairs?",
+  "Customization options?",
+  "Payment methods?",
+  "Delivery tracking?",
 ];
 
 export default function ChatbotPage() {
+  const navigation = useNavigation();
+  const scrollViewRef = useRef();
+  
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [furnituneInfo, setFurnituneInfo] = useState(DEFAULT_FURNITUNE_INFO);
-  const scrollViewRef = useRef();
-  const navigation = useNavigation();
-
-  const [faqVisible, setFaqVisible] = useState(true);
-  const faqAnim = useRef(new Animated.Value(1)).current;
-  const recoAnim = useRef(new Animated.Value(1)).current; // control button width
 
   useEffect(() => {
     setFurnituneInfo(furnituneData.info || DEFAULT_FURNITUNE_INFO);
     setMessages([
       {
+        id: 1,
         sender: "bot",
         text: "👋 Hi there! I’m Furni, your personal furniture assistant. How can I help you today?",
       },
     ]);
   }, []);
 
-  // 🚀 Send Message
-  const handleSend = async () => {
-    if (!input.trim()) return;
-    const userMessage = { sender: "user", text: input };
-    setMessages((prev) => [...prev, userMessage]);
+  const addMessage = (msg) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setMessages((prev) => [...prev, { id: Date.now(), ...msg }]);
+  };
+
+  const handleSend = async (textOverride = null) => {
+    const textToSend = textOverride || input;
+    if (!textToSend.trim()) return;
+
+    addMessage({ sender: "user", text: textToSend });
     setInput("");
     setIsTyping(true);
-
-    // Animate FAQ fade and button shrink
-    if (faqVisible) {
-      Animated.parallel([
-        Animated.timing(faqAnim, {
-          toValue: 0,
-          duration: 350,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(recoAnim, {
-          toValue: 0,
-          duration: 400,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: false,
-        }),
-      ]).start(() => setFaqVisible(false));
-    }
 
     try {
       const response = await axios.post(
@@ -91,17 +85,9 @@ export default function ChatbotPage() {
           messages: [
             {
               role: "system",
-              content: `
-You are Furni, the official chatbot for Furnitune — an e-commerce platform for Santos Upholstery.
-Use ONLY the following business information to answer user questions:
-
-${furnituneInfo}
-
-If the user asks about something unrelated, reply:
-"I'm sorry, I can only answer questions about Furnitune’s products, services, or policies."
-              `,
+              content: `You are Furni, the official chatbot for Furnitune. Use this info: ${furnituneInfo}`,
             },
-            { role: "user", content: input },
+            { role: "user", content: textToSend },
           ],
         },
         {
@@ -112,268 +98,213 @@ If the user asks about something unrelated, reply:
         }
       );
 
-      const botReply =
-        response.data?.choices?.[0]?.message?.content?.trim?.() ||
-        "Sorry, I didn’t catch that.";
-      setMessages((prev) => [...prev, { sender: "bot", text: botReply }]);
+      const botReply = response.data?.choices?.[0]?.message?.content?.trim?.() || "Sorry, I didn’t catch that.";
+      addMessage({ sender: "bot", text: botReply });
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { sender: "bot", text: "⚠️ Sorry, I’m having trouble reaching the server right now." },
-      ]);
+      addMessage({ sender: "bot", text: "⚠️ Sorry, I’m having trouble reaching the server right now." });
     } finally {
       setIsTyping(false);
-      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 120);
     }
   };
 
-  // Recommender button width transition
-  const recoWidth = recoAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [SCREEN_WIDTH * 0.78, SCREEN_WIDTH - 40], // shrink when FAQ hides
-  });
+  // ==========================
+  // RENDERERS
+  // ==========================
 
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: "#faf7ef" }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      {/* Chat Messages */}
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.chatContainer}
-        contentContainerStyle={{ paddingBottom: 200 }}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <Ionicons name="arrow-back" size={24} color="#333" />
+      </TouchableOpacity>
+      <View style={styles.headerTitleContainer}>
+        <Text style={styles.headerTitle}>Furni Chat</Text>
+        <Text style={styles.headerSubtitle}>Always here to help</Text>
+      </View>
+      <TouchableOpacity 
+        onPress={() => navigation.navigate("RecommenderPage")} 
+        style={styles.headerActionBtn}
       >
-        {messages.map((msg, i) => (
-          <View
-            key={i}
-            style={[
-              styles.messageBubble,
-              msg.sender === "bot" ? styles.botBubble : styles.userBubble,
-            ]}
-          >
-            <Text style={msg.sender === "bot" ? styles.botText : styles.userText}>
+         <Ionicons name="sparkles" size={20} color={BRAND_COLOR} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderMessageItem = (msg, idx) => {
+    const isBot = msg.sender === "bot";
+    return (
+      <View key={msg.id || idx} style={[styles.msgRow, isBot ? styles.msgRowBot : styles.msgRowUser]}>
+        {isBot && (
+            <View style={styles.botAvatar}>
+                <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
+            </View>
+        )}
+        <View style={[styles.bubble, isBot ? styles.bubbleBot : styles.bubbleUser]}>
+            <Text style={[styles.msgText, isBot ? styles.textBot : styles.textUser]}>
               {msg.text}
             </Text>
-          </View>
-        ))}
-        {isTyping && (
-          <View style={[styles.messageBubble, styles.botBubble]}>
-            <ActivityIndicator size="small" color="#2c6e49" />
-          </View>
-        )}
-      </ScrollView>
-
-      {/* 🧠 FAQ Section */}
-      <Animated.View
-      style={[
-        styles.faqContainer,
-        {
-          opacity: faqAnim,
-          transform: [
-            {
-              translateY: faqAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [20, 0],
-              }),
-            },
-          ],
-        },
-      ]}
-    >
-      {faqVisible && (
-        <>
-          <Text style={styles.inlineFAQPrompt}>Quick Questions</Text>
-
-          <View style={styles.faqCard}>
-            {FAQS.map((faq, i) => (
-              <TouchableOpacity
-                key={i}
-                activeOpacity={0.8}
-                style={styles.faqItem}
-                onPress={() => {
-                  setInput(faq);
-                  handleSend();
-                }}
-              >
-                <Text style={styles.faqText}>{faq}</Text>
-                <Ionicons name="chevron-forward" size={18} color="#2c6e49" />
-              </TouchableOpacity>
-            ))}
-          </View>
-        </>
-      )}
-    </Animated.View>
-
-      {/* 💬 Recommender + FAQ Buttons */}
-      <View style={styles.recoContainer}>
-        <Animated.View style={{ width: recoWidth }}>
-          <TouchableOpacity
-            style={styles.recoButton}
-            onPress={() => navigation.navigate("RecommenderPage")}
-          >
-            <Ionicons name="sparkles-outline" size={20} color="#fff" />
-            <Text style={styles.recoText}>Try our Recommender</Text>
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* ❓ FAQ Button (only appears after FAQ hides) */}
-        {!faqVisible && (
-          <TouchableOpacity
-            style={[styles.faqCircleButton]}
-            onPress={() => {
-              setFaqVisible(true);
-              Animated.parallel([
-                Animated.timing(faqAnim, {
-                  toValue: 1,
-                  duration: 350,
-                  easing: Easing.out(Easing.ease),
-                  useNativeDriver: true,
-                }),
-                Animated.timing(recoAnim, {
-                  toValue: 1,
-                  duration: 350,
-                  easing: Easing.out(Easing.ease),
-                  useNativeDriver: false,
-                }),
-              ]).start();
-            }}
-          >
-            <Ionicons name="help-circle-outline" size={25} color="#fff" />
-          </TouchableOpacity>
-        )}
+        </View>
       </View>
+    );
+  };
 
-      {/* Input Bar */}
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Ask something about Furnitune..."
-          value={input}
-          onChangeText={setInput}
-          onSubmitEditing={handleSend}
-          returnKeyType="send"
-        />
-        <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
-          <Text style={{ color: "#fff", fontWeight: "600" }}>➤</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      {renderHeader()}
+
+      {/* ANDROID KEYBOARD FIX:
+        1. behavior="height" resizes the view when keyboard opens (standard Android behavior).
+        2. keyboardVerticalOffset={30} gives a tiny buffer, usually 0 is fine on Android but 30 helps sticky footers.
+        3. flex: 1 is crucial to let it fill the space.
+      */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 90} 
+      >
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.chatContainer}
+          contentContainerStyle={styles.chatContent}
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+          keyboardShouldPersistTaps="handled" // Ensures taps on FAQs/Send work while keyboard is open
+        >
+          {messages.map(renderMessageItem)}
+          
+          {isTyping && (
+             <View style={styles.typingContainer}>
+                <ActivityIndicator size="small" color="#aaa" />
+                <Text style={styles.typingText}>Furni is typing...</Text>
+             </View>
+          )}
+        </ScrollView>
+
+        {/* FIXED BOTTOM AREA: FAQ + INPUT */}
+        <View style={styles.footerContainer}>
+            
+            {/* Permanent Quick Questions */}
+            <View style={styles.faqContainer}>
+                <Text style={styles.faqLabel}>Quick Ask:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.faqScroll}>
+                    {FAQS.map((faq, i) => (
+                        <TouchableOpacity
+                            key={i}
+                            style={styles.faqChip}
+                            onPress={() => handleSend(faq)}
+                        >
+                            <Text style={styles.faqText}>{faq}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+            </View>
+
+            {/* Input Bar */}
+            <View style={styles.inputWrapper}>
+                <View style={styles.inputContainer}>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Ask about products, repairs..."
+                        placeholderTextColor="#999"
+                        value={input}
+                        onChangeText={setInput}
+                        onSubmitEditing={() => handleSend()}
+                        returnKeyType="send"
+                    />
+                    <TouchableOpacity 
+                        style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]} 
+                        onPress={() => handleSend()}
+                        disabled={!input.trim()}
+                    >
+                        <Ionicons name="send" size={20} color="#fff" />
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </View>
+
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
-// 🎨 Styles
+// ==========================
+// STYLES
+// ==========================
 const styles = StyleSheet.create({
-  chatContainer: { flex: 1, paddingHorizontal: 12, marginTop: 10 },
-  messageBubble: {
-    marginVertical: 6,
-    padding: 12,
-    borderRadius: 12,
-    maxWidth: "85%",
-  },
-  botBubble: { backgroundColor: "#e5e5e5", alignSelf: "flex-start" },
-  userBubble: { backgroundColor: "#2c6e49", alignSelf: "flex-end" },
-  botText: { color: "#000" },
-  userText: { color: "#fff" },
-
-  faqContainer: {
-  paddingHorizontal: 16,
-  paddingTop: 10,
-  paddingBottom: 5,
-  backgroundColor: "#faf9f6",
-  borderTopWidth: 1,
-  borderColor: "#eeeeee",
-},
-inlineFAQPrompt: {
-  textAlign: "center",
-  fontWeight: "700",
-  color: "#2c6e49",
-  fontSize: 15,
-  marginBottom: 10,
-  letterSpacing: 0.5,
-},
-faqCard: {
-  backgroundColor: "#fff",
-  borderRadius: 14,
-  paddingVertical: 4,
-  paddingHorizontal: 8,
-  shadowColor: "#000",
-  shadowOpacity: 0.08,
-  shadowRadius: 4,
-  shadowOffset: { width: 0, height: 2 },
-  elevation: 3,
-},
-faqItem: {
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "space-between",
-  backgroundColor: "#fff",
-  paddingVertical: 12,
-  paddingHorizontal: 12,
-  borderBottomWidth: 1,
-  borderBottomColor: "#f2f2f2",
-},
-faqText: {
-  fontSize: 14,
-  color: "#333",
-  flex: 1,
-  marginRight: 8,
-},
-
-
-  recoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginBottom: 8,
-    paddingHorizontal: 10,
-  },
-  recoButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#2c6e49",
-    borderRadius: 30,
-    paddingVertical: 12,
-  },
-  recoText: { color: "#fff", fontWeight: "600", marginLeft: 6, fontSize: 14 },
-  faqCircleButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: "#44624a",
-    justifyContent: "center",
-    alignItems: "center",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 3 },
-  },
-
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 10,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderColor: "#ddd",
-  },
-  input: {
+  safeArea: {
     flex: 1,
-    backgroundColor: "#f1f1f1",
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginRight: 10,
+    backgroundColor: "#fff",
+    // ANDROID FIX: Ensure Status Bar doesn't overlap Header
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+    elevation: 2,
+    zIndex: 10,
+  },
+  backButton: { padding: 8 },
+  headerActionBtn: { padding: 8, backgroundColor: "#f0f9f4", borderRadius: 20 },
+  headerTitleContainer: { alignItems: "center" },
+  headerTitle: { fontSize: 16, fontWeight: "700", color: "#333" },
+  headerSubtitle: { fontSize: 11, color: BRAND_COLOR, fontWeight: "600" },
+
+  chatContainer: { flex: 1, backgroundColor: BG_COLOR },
+  chatContent: { padding: 16, paddingBottom: 20 },
+  
+  msgRow: { flexDirection: "row", marginBottom: 16, alignItems: "flex-end" },
+  msgRowBot: { justifyContent: "flex-start" },
+  msgRowUser: { justifyContent: "flex-end" },
+  botAvatar: {
+    width: 32, height: 32, borderRadius: 16, backgroundColor: BRAND_COLOR,
+    alignItems: "center", justifyContent: "center", marginRight: 8,
+  },
+  bubble: {
+    maxWidth: "80%", padding: 14, borderRadius: 20, elevation: 1,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2,
+  },
+  bubbleBot: { backgroundColor: "#fff", borderBottomLeftRadius: 4 },
+  bubbleUser: { backgroundColor: BRAND_COLOR, borderBottomRightRadius: 4 },
+  msgText: { fontSize: 15, lineHeight: 22 },
+  textBot: { color: "#333" },
+  textUser: { color: "#fff" },
+  
+  typingContainer: { flexDirection: 'row', alignItems: 'center', marginLeft: 42, marginBottom: 10 },
+  typingText: { fontSize: 12, color: '#888', marginLeft: 6 },
+
+  footerContainer: {
+      backgroundColor: '#fff',
+      borderTopWidth: 1,
+      borderTopColor: '#f0f0f0',
+  },
+  faqContainer: {
+      paddingVertical: 10, paddingHorizontal: 16, backgroundColor: '#fff', 
+  },
+  faqLabel: {
+      fontSize: 12, fontWeight: '700', color: '#999', marginBottom: 8, textTransform: 'uppercase'
+  },
+  faqScroll: { flexGrow: 0 },
+  faqChip: {
+      backgroundColor: '#f5f7fa', paddingVertical: 8, paddingHorizontal: 14,
+      borderRadius: 20, marginRight: 8, borderWidth: 1, borderColor: '#e1e4e8',
+  },
+  faqText: { color: '#555', fontSize: 13, fontWeight: '600' },
+
+  inputWrapper: { paddingHorizontal: 10, paddingBottom: 10, paddingTop: 4 },
+  inputContainer: {
+    flexDirection: "row", alignItems: "center", backgroundColor: "#f8f8f8",
+    borderRadius: 30, paddingHorizontal: 6, paddingVertical: 6,
+    borderWidth: 1, borderColor: "#eee",
+  },
+  input: { flex: 1, paddingHorizontal: 14, paddingVertical: 8, fontSize: 15, color: "#333", maxHeight: 100 },
   sendButton: {
-    backgroundColor: "#2c6e49",
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: BRAND_COLOR, width: 40, height: 40, borderRadius: 20,
+    alignItems: "center", justifyContent: "center", marginLeft: 6,
   },
+  sendButtonDisabled: { backgroundColor: "#ccc" }
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react"; // ✅ Added useCallback
 import {
   View,
   Text,
@@ -7,11 +7,12 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Modal,
   Platform,
   StatusBar,
   Animated,
   Easing,
+  useWindowDimensions,
+  RefreshControl, // ✅ Added RefreshControl
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, query, where } from "firebase/firestore";
@@ -20,51 +21,43 @@ import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { Image } from "expo-image";
 import FilterModal from "./FilterModal";
 
-export default function ProductPage({ navigation, route }) {
+export default function BestSellerPage({ navigation, route }) {
   const [products, setProducts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [loading, setLoading] = useState(true);
   const [filterVisible, setFilterVisible] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // ✅ Refreshing state
+  
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
 
-  // Sidebar filters
+  // ✅ Updated Filter State
   const [filters, setFilters] = useState({
     type: [],
-    sizes: [],
-    materials: [],
-    seats: [],
-    shapes: [],
+    covermaterial: [],
+    framematerial: [],
+    price: [],
   });
 
-  const toggleFilter = (category, value) => {
+  // ✅ Toggle Filters
+  const toggleFilter = (key, value) => {
     setFilters((prev) => {
-      const current = prev[category] || [];
-      const updated = current.includes(value)
-        ? current.filter((v) => v !== value)
-        : [...current, value];
-
-      // 🔹 Sync with CategoryBar if type filter changes
-      if (category === "type") {
-        if (updated.length === 1) {
-          // One type selected → focus that category
-          setSelectedCategory(updated[0]);
-        } else {
-          // Two or more types (or none) → reset to "All"
-          setSelectedCategory("All");
-        }
+      const currentValues = prev[key] || [];
+      if (currentValues.includes(value)) {
+        return { ...prev, [key]: currentValues.filter((v) => v !== value) };
+      } else {
+        return { ...prev, [key]: [...currentValues, value] };
       }
-
-      return { ...prev, [category]: updated };
     });
   };
 
-
+  // ✅ Reset Filters
   const resetFilters = () => {
     setFilters({
       type: [],
-      sizes: [],
-      materials: [],
-      seats: [],
-      shapes: [],
+      covermaterial: [],
+      framematerial: [],
+      price: [],
     });
   };
 
@@ -75,73 +68,108 @@ export default function ProductPage({ navigation, route }) {
     }
   }, [route?.params]);
 
-  // Fetch ONLY best seller products from Firestore
-  useEffect(() => {
-    const fetchProducts = async () => {
-      const storage = getStorage();
-      try {
-        const q = query(collection(db, "products"), where("isBestSeller", "==", true));
-        const querySnapshot = await getDocs(q);
-        const list = await Promise.all(
-          querySnapshot.docs.map(async (doc) => {
-            const data = doc.data();
+  // ---------------------------------------------------------
+  // 🔹 REFACTORED: Data Fetching Function
+  // ---------------------------------------------------------
+  const loadBestSellers = useCallback(async (isRefreshing = false) => {
+    // Only show big spinner if not refreshing
+    if (!isRefreshing) setLoading(true);
 
-            let imageUrl = null;
-            if (data.thumbnail) {
-              try {
-                imageUrl = await getDownloadURL(ref(storage, data.thumbnail));
-              } catch (err) {
-                console.log("Thumbnail fetch error:", err);
-              }
-            } else if (data.images?.length > 0) {
-              try {
-                imageUrl = await getDownloadURL(ref(storage, data.images[0]));
-              } catch (err) {
-                console.log("Image fetch error:", err);
-              }
-            }
+    const storage = getStorage();
+    try {
+      const q = query(collection(db, "products"), where("isBestSeller", "==", true));
+      const querySnapshot = await getDocs(q);
+      const list = await Promise.all(
+        querySnapshot.docs.map(async (doc) => {
+          const data = doc.data();
+          let imageUrl = null;
 
-            return {
-              id: doc.id,
-              name: data.name,
-              price: data.basePrice ?? 0,
-              image: imageUrl,
-              rating: data.ratingAvg ?? 0,
-              reviews: data.reviewsCount ?? 0,
-              category: data.baseType || "Uncategorized",
-              size: data.size || null,
-              material: data.material || null,
-              seats: data.seats || null,
-              shape: data.shape || null,
-            };
-          })
-        );
-        setProducts(list);
-      } catch (err) {
-        console.error("Error fetching products:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+          // Image logic
+          if (data.images?.length > 0) {
+            try { imageUrl = await getDownloadURL(ref(storage, data.images[0])); } catch (e) {}
+          } else if (data.defaultImagePath) {
+            try { imageUrl = await getDownloadURL(ref(storage, data.defaultImagePath)); } catch (e) {}
+          } else if (data.thumbnail) {
+            try { imageUrl = await getDownloadURL(ref(storage, data.thumbnail)); } catch (e) {}
+          }
 
-    fetchProducts();
+          return {
+            id: doc.id,
+            name: data.name,
+            price: data.basePrice ?? 0,
+            image: imageUrl,
+            rating: data.ratingAvg ?? 0,
+            reviews: data.reviewsCount ?? 0,
+            category: data.baseType || "Uncategorized",
+            type: data.baseType || "Uncategorized",
+            tags: data.tags || [],
+          };
+        })
+      );
+      setProducts(list);
+    } catch (err) {
+      console.error("Error fetching products:", err);
+    } finally {
+      if (!isRefreshing) setLoading(false);
+    }
   }, []);
 
-  // Filtering logic
+  // ✅ Initial Load
+  useEffect(() => {
+    loadBestSellers(false);
+  }, [loadBestSellers]);
+
+  // ✅ Refresh Handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadBestSellers(true);
+    setRefreshing(false);
+  }, [loadBestSellers]);
+
+
+  // ✅ Advanced Filtering Logic
   const filteredProducts = products.filter((p) => {
+    // 1. Top Bar Category Filter
     if (selectedCategory !== "All" && p.category !== selectedCategory) return false;
-    if (filters.type.length > 0 && !filters.type.includes(p.category)) return false;
-    if (filters.sizes.length > 0 && !filters.sizes.includes(p.size)) return false;
-    if (filters.materials.length > 0 && !filters.materials.includes(p.material)) return false;
-    if (filters.seats.length > 0 && !filters.seats.includes(p.seats)) return false;
-    if (filters.shapes.length > 0 && !filters.shapes.includes(p.shape)) return false;
-    return true;
+
+    // 2. Type Filter (From Modal)
+    const typeFilters = filters.type || [];
+    const typeMatch = typeFilters.length === 0 || typeFilters.includes(p.type);
+
+    // 3. Cover Material (Checks inside 'tags')
+    const coverFilters = filters.covermaterial || [];
+    const coverMatch = coverFilters.length === 0 || coverFilters.some(filter => {
+       const searchFor = filter === "Fabrics" ? "fabric" : filter.toLowerCase();
+       return p.tags.some(tag => tag.toLowerCase().includes(searchFor));
+    });
+
+    // 4. Frame Material (Checks inside 'tags')
+    const frameFilters = filters.framematerial || [];
+    const frameMatch = frameFilters.length === 0 || frameFilters.some(filter => {
+       return p.tags.some(tag => tag.toLowerCase().includes(filter.toLowerCase()));
+    });
+
+    // 5. Price Filter
+    const priceFilters = filters.price || [];
+    let priceMatch = true;
+    if (priceFilters.length > 0) {
+      priceMatch = priceFilters.some((range) => {
+        const price = parseFloat(p.price);
+        if (range === "Under ₱5,000") return price < 5000;
+        if (range === "₱5,000–₱9,999") return price >= 5000 && price <= 9999;
+        if (range === "₱10,000–₱14,999") return price >= 10000 && price <= 14999;
+        if (range === "₱15,000+") return price >= 15000;
+        return false;
+      });
+    }
+
+    return typeMatch && coverMatch && frameMatch && priceMatch;
   });
 
   // Product card
   const renderProduct = ({ item }) => (
     <TouchableOpacity
-      style={styles.card}
+      style={[styles.card, isTablet && styles.cardTablet]}
       onPress={() => navigation.navigate("ProductDetails", { product: item })}
     >
       {item.image ? (
@@ -157,8 +185,10 @@ export default function ProductPage({ navigation, route }) {
           <Text>No Image</Text>
         </View>
       )}
-      <Text style={styles.name}>{item.name}</Text>
-      <Text style={styles.price}>₱{Number(item.price).toFixed(2)}</Text>
+      <Text style={[styles.name, isTablet && styles.nameTablet]}>{item.name}</Text>
+      <Text style={[styles.price, isTablet && styles.priceTablet]}>
+        ₱{Number(item.price).toFixed(2)}
+      </Text>
       <Text style={styles.rating}>
         ⭐ {item.rating} ({item.reviews} Reviews)
       </Text>
@@ -177,7 +207,7 @@ export default function ProductPage({ navigation, route }) {
           <TouchableOpacity
             key={cat}
             style={[styles.filterBtn, selectedCategory === cat && styles.activeFilter]}
-            onPress={() => setSelectedCategory(cat)}
+            onPress={() => { setSelectedCategory(cat); resetFilters(); }}
           >
             <Text
               style={[styles.filterText, selectedCategory === cat && styles.activeFilterText]}
@@ -190,39 +220,6 @@ export default function ProductPage({ navigation, route }) {
     </View>
   );
 
-  // 🔹 Animation logic
-  const [slideAnim] = useState(new Animated.Value(0));
-
-  useEffect(() => {
-    if (filterVisible) {
-      Animated.timing(slideAnim, {
-        toValue: 1,
-        duration: 350,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-    } else {
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 300,
-        easing: Easing.in(Easing.ease),
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [filterVisible]);
-
-  const slideUp = {
-    transform: [
-      {
-        translateY: slideAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: [800, 0],
-        }),
-      },
-    ],
-    opacity: slideAnim,
-  };
-
   return (
     <View style={styles.container}>
       {/* Product list */}
@@ -230,7 +227,7 @@ export default function ProductPage({ navigation, route }) {
         data={filteredProducts}
         renderItem={renderProduct}
         keyExtractor={(item) => item.id}
-        numColumns={2}
+        numColumns={isTablet ? 3 : 2}
         columnWrapperStyle={styles.row}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
@@ -249,6 +246,16 @@ export default function ProductPage({ navigation, route }) {
           </View>
         }
         stickyHeaderIndices={[0]}
+
+        // ✅ Attach Refresh Control
+        refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={["#2c6e49"]}
+              tintColor="#2c6e49"
+            />
+        }
       />
 
       {/* Loading */}
@@ -256,185 +263,40 @@ export default function ProductPage({ navigation, route }) {
         <ActivityIndicator style={styles.loading} size="small" color="#2c6e49" />
       )}
 
-      {/* Animated Filter Modal */}
+      {/* Filter Modal */}
       <FilterModal
-              visible={filterVisible}
-              onClose={() => setFilterVisible(false)}
-              filters={filters}
-              toggleFilter={toggleFilter}
-              resetFilters={resetFilters}
-              mode="allTypes"                 // all types mode
+        visible={filterVisible}
+        onClose={() => setFilterVisible(false)}
+        filters={filters}
+        toggleFilter={toggleFilter}
+        resetFilters={resetFilters}
+        mode="allTypes" 
       />
     </View>
   );
 }
 
 export const styles = StyleSheet.create({
-  // 🔹 App Container
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-  },
-
-  // 🔹 Header
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  header: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#2c6e49", // unified
-  },
-
-  // 🔹 Filter Button
-  filterButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f5f5f5",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  filterButtonText: {
-    marginLeft: 6,
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#333",
-  },
-
-  // 🔹 Category Filters
-  categoryContainer: {
-    backgroundColor: "#fff",
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  filterScroll: {
-    paddingHorizontal: 4,
-  },
-  filterBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: "#f3f3f3",
-    marginRight: 10,
-  },
-  filterText: {
-    fontSize: 14,
-    color: "#555",
-  },
-  activeFilter: {
-    backgroundColor: "#2c6e49",
-  },
-  activeFilterText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-
-  // 🔹 Product Grid
-  row: {
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-  },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    marginVertical: 10,
-    flex: 1,
-    marginHorizontal: 4,
-    padding: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  image: {
-    width: "100%",
-    height: 140,
-    borderRadius: 10,
-    marginBottom: 10,
-    backgroundColor: "#f2f2f2",
-  },
-  noImage: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  name: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 4,
-  },
-  price: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#2c6e49",
-    marginBottom: 4,
-  },
-  rating: {
-    fontSize: 12,
-    color: "#777",
-  },
-
-  // 🔹 Filter Modal
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.25)",
-    justifyContent: "flex-end",
-  },
-  modalWrapper: {
-    flex: 1,
-    backgroundColor: "#fff",
-    height: "100%",
-    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0,
-  },
-  filterHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-    backgroundColor: "#fff",
-    elevation: 3,
-  },
-  filterContainer: {
-    flex: 1,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: "#FAF8F2",
-  },
-  sidebarTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    letterSpacing: 1,
-    color: "#2C2C2C",
-    textTransform: "uppercase",
-    marginBottom: 10,
-    textShadowColor: "rgba(0,0,0,0.2)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 1,
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#B8B6AE",
-    paddingBottom: 6,
-  },
-
-  // 🔹 Loading Indicator
-  loading: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
-    marginLeft: -12,
-    marginTop: -12,
-  },
+  container: { flex: 1, backgroundColor: "#fff" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#eee" },
+  header: { fontSize: 18, fontWeight: "bold", color: "#2c6e49" },
+  filterButton: { flexDirection: "row", alignItems: "center", backgroundColor: "#f5f5f5", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  filterButtonText: { marginLeft: 6, fontSize: 14, fontWeight: "500", color: "#333" },
+  categoryContainer: { backgroundColor: "#fff", paddingVertical: 10, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: "#eee" },
+  filterScroll: { paddingHorizontal: 4 },
+  filterBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: "#f3f3f3", marginRight: 10 },
+  filterText: { fontSize: 14, color: "#555" },
+  activeFilter: { backgroundColor: "#2c6e49" },
+  activeFilterText: { color: "#fff", fontWeight: "600" },
+  row: { justifyContent: "space-between", paddingHorizontal: 12 },
+  card: { backgroundColor: "#fff", borderRadius: 12, marginVertical: 10, flex: 1, marginHorizontal: 4, padding: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
+  image: { width: "100%", height: 140, borderRadius: 10, marginBottom: 10, backgroundColor: "#f2f2f2" },
+  noImage: { justifyContent: "center", alignItems: "center" },
+  name: { fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 4 },
+  nameTablet: { fontSize: 18 },
+  price: { fontSize: 14, fontWeight: "bold", color: "#2c6e49", marginBottom: 4 },
+  priceTablet: { fontSize: 18 },
+  rating: { fontSize: 12, color: "#777" },
+  loading: { position: "absolute", top: "50%", left: "50%", marginLeft: -12, marginTop: -12 },
+  cardTablet: { flex: 0.3, marginHorizontal: 10, padding: 16 },
 });

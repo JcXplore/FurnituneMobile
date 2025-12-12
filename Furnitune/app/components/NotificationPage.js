@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { getAuth } from "firebase/auth";
-import { setDoc } from "firebase/firestore";
 
 import {
   getFirestore,
@@ -22,6 +21,7 @@ import {
   onSnapshot,
   updateDoc,
   doc,
+  serverTimestamp,
 } from "firebase/firestore";
 import { app } from "./firebaseConfig";
 
@@ -82,57 +82,83 @@ export default function NotificationPage({ navigation }) {
   };
 
   // ✅ Handle tap on a notification
+  // ✅ Handle tap on a notification
   const handlePress = async (item) => {
-  try {
-    const notifRef = doc(db, "users", user.uid, "notifications", item.id);
-
-    // ✅ Only update the `read` field — this matches your rule exactly
-    if (!item.read) {
-  const notifRef = doc(db, "users", user.uid, "notifications", item.id);
-
-  // ✅ Include all required fields so Firestore rules pass
-  await setDoc(
-    notifRef,
-    {
-      userId: user.uid,
-      title: item.title || "",
-      body: item.body || "",
-      image: item.image || "",
-      link: item.link || "",
-      type: item.type || "",
-      createdAt: item.createdAt || null,
-      orderId: item.orderId || "",
-      repairId: item.repairId || "",
-      status: item.status || "",
-      read: true, // <-- update
-      readAt: new Date(), // optional
-    },
-    { merge: true }
-  );
-
-  // ✅ Instantly reflect in UI
-  setNotifications((prev) =>
-    prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
-  );
-}
-
-
-    // 🧭 Then navigate
-    if (item.orderId) {
-      navigation.navigate("OrderPage", { orderId: item.orderId, source: "orders" });
-    } else if (item.link) {
-      const params = new URLSearchParams(item.link.split("?")[1]);
-      const orderId = params.get("orderId");
-      if (orderId) {
-        navigation.navigate("OrderPage", { orderId, source: "orders" });
+    try {
+      // 1. Mark as read immediately
+      if (!item.read) {
+        const notifRef = doc(db, "users", user.uid, "notifications", item.id);
+        await updateDoc(notifRef, {
+          read: true,
+          readAt: serverTimestamp(),
+        });
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
+        );
       }
-    } else {
-      Alert.alert("Notification", "This notification has no linked page.");
+
+      // 2. Navigation Logic
+      // Priority A: Check direct properties on the notification object
+      if (item.orderId) {
+        navigation.navigate("OrderPage", {
+          orderId: item.orderId,
+          source: "orders",
+        });
+        return;
+      } 
+      
+      if (item.customId) {
+        navigation.navigate("OrderPage", {
+          orderId: item.customId, // Map customId to orderId for the screen
+          source: "custom_orders",
+        });
+        return;
+      }
+
+      if (item.repairId) {
+        navigation.navigate("OrderPage", {
+          orderId: item.repairId, // Map repairId to orderId for the screen
+          source: "repairs",
+        });
+        return;
+      }
+
+      // Priority B: Check the link string (Fix for Web Notifications)
+      if (item.link) {
+        // Extract query params manually
+        const urlPart = item.link.split("?")[1] || "";
+        const params = new URLSearchParams(urlPart);
+        
+        const linkOrderId = params.get("orderId");
+        const linkCustomId = params.get("customId");
+        const linkRepairId = params.get("repairId");
+
+        if (linkOrderId) {
+          navigation.navigate("OrderPage", { 
+            orderId: linkOrderId, 
+            source: "orders" 
+          });
+        } else if (linkCustomId) {
+          // ✅ THIS FIXES YOUR ISSUE
+          navigation.navigate("OrderPage", { 
+            orderId: linkCustomId, 
+            source: "custom_orders" 
+          });
+        } else if (linkRepairId) {
+          navigation.navigate("OrderPage", { 
+            orderId: linkRepairId, 
+            source: "repairs" 
+          });
+        } else {
+          Alert.alert("Notification", "This notification link is invalid.");
+        }
+      } else {
+        Alert.alert("Notification", "This notification has no linked page.");
+      }
+    } catch (error) {
+      console.error("❌ Error handling notification click:", error);
     }
-  } catch (error) {
-    console.error("❌ Error handling notification click:", error);
-  }
-};
+  };
 
 
   // ✅ Render each notification

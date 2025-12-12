@@ -20,10 +20,11 @@ import {
   signInWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithCredential,
+  sendPasswordResetEmail,
+  sendEmailVerification, // ✅ Added for verification resend
 } from "firebase/auth";
 import { auth, db } from "./firebaseConfig";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { sendPasswordResetEmail } from "firebase/auth";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore"; // ✅ Added updateDoc
 
 // ✅ Configure Google Sign-In
 GoogleSignin.configure({
@@ -38,44 +39,17 @@ export default function LoginScreen({ navigation }) {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // ----------------- Email/Password Sign-in -----------------
-  const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert("Please enter both email and password");
+  // ----------------- Forgot Password -----------------
+  // ✅ Restored this function so the error disappears
+  const handleForgotPassword = async () => {
+    // If no email entered, just go to the screen
+    if (!email) {
+      navigation.navigate("ForgotPassword");
       return;
     }
 
+    // If email is entered, try to send the reset link directly
     try {
-      setLoading(true);
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      if (!user.emailVerified) {
-        Alert.alert(
-          "Email not verified",
-          "Please verify your email first by clicking the link sent to your inbox."
-        );
-        await auth.signOut();
-        return;
-      }
-
-      Alert.alert("Login successful!");
-      navigation.navigate("Landing");
-    } catch (error) {
-      console.error("Login error:", error);
-      Alert.alert("Login failed", error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleForgotPassword = async () => {
-  if (!email) {
-    navigation.navigate("ForgotPassword");
-    return;
-  }
-
-  try {
       await sendPasswordResetEmail(auth, email);
       Alert.alert(
         "Password Reset Email Sent",
@@ -87,70 +61,142 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
+  // ----------------- Email/Password Sign-in -----------------
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert("Error", "Please enter both email and password");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // 1. Sign In
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      let user = userCredential.user;
+
+      // 🔄 RELOAD USER: Checks if they just clicked the verification link
+      await user.reload();
+      user = auth.currentUser; 
+
+      // 2. Check Verification Status
+      if (!user.emailVerified) {
+        Alert.alert(
+          "Email Not Verified",
+          "You must verify your email before logging in. Check your inbox.",
+          [
+            {
+              text: "Resend Email",
+              onPress: async () => {
+                try {
+                  await sendEmailVerification(user);
+                  Alert.alert("Sent!", "A new verification email has been sent.");
+                } catch (err) {
+                  Alert.alert("Error", "Too many requests. Please wait a moment.");
+                }
+              }
+            },
+            { 
+              text: "OK", 
+              style: "cancel",
+              onPress: async () => {
+                 await auth.signOut(); 
+              }
+            }
+          ]
+        );
+        return; 
+      }
+
+      // 3. ✅ SYNC TO FIRESTORE
+      // If Auth says "Verified" but Firestore says "false", update it now.
+      const userDocRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userDocRef);
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        if (userData.emailVerified === false) {
+           console.log("Syncing email verification status to Firestore...");
+           await updateDoc(userDocRef, {
+             emailVerified: true,
+             updatedAt: new Date()
+           });
+        }
+      }
+
+      Alert.alert("Success", "Login successful!");
+      navigation.navigate("Landing");
+
+    } catch (error) {
+      console.error("Login error:", error);
+      Alert.alert("Login Failed", "Invalid email or password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ----------------- Google Sign-In -----------------
   const signIn = async () => {
     try {
       await GoogleSignin.hasPlayServices();
-
-      // Let user select their Google account
       await GoogleSignin.signIn();
-
-      // ✅ Get the ID token
       const { idToken } = await GoogleSignin.getTokens();
 
       if (!idToken) {
         throw new Error("No ID token returned from Google Sign-In.");
       }
 
-      // ✅ Create Firebase credential
       const googleCredential = GoogleAuthProvider.credential(idToken);
-
-      // ✅ Sign in to Firebase with that credential
       const userCredential = await signInWithCredential(auth, googleCredential);
-
-      // ✅ Get the logged-in user's data from Firebase
       const currentUser = userCredential.user;
 
-      // ✅ Save user info in Firestore (first-time only)
+      // 🛑 Check Verification for Google Users too
+      if (!currentUser.emailVerified) {
+         Alert.alert("Access Denied", "Your Google account email is not verified.");
+         await auth.signOut();
+         await GoogleSignin.signOut();
+         return;
+      }
+
       if (currentUser) {
         const userDocRef = doc(db, "users", currentUser.uid);
         const docSnap = await getDoc(userDocRef);
 
-        if (!docSnap.exists()) {
+        if (docSnap.exists()) {
+          // 🔄 EXISTING USER: Update timestamp
+          await updateDoc(userDocRef, {
+            updatedAt: new Date(),
+          });
+        } else {
+          // 🆕 NEW USER: Create with specific fields
           await setDoc(userDocRef, {
-            name: currentUser.displayName || "Anonymous",
+            createdAt: new Date(),
             email: currentUser.email || "",
-            photo: currentUser.photoURL || "",
+            emailVerified: true,
+            name: currentUser.displayName || "Anonymous",
+            photo: currentUser.photoURL || "https://via.placeholder.com/150",
+            provider: "google",
+            role: "customer", 
+            source: "mobile",
             uid: currentUser.uid,
+            updatedAt: new Date(),
           });
         }
       }
       navigation.navigate("Landing");
     } catch (error) {
       console.error("Google Sign-In Error:", error);
-
       if (error.code === statusCodes.SIGN_IN_CANCELLED) {
         Alert.alert("Sign-In cancelled");
       } else if (error.code === statusCodes.IN_PROGRESS) {
         Alert.alert("Sign-In in progress");
-      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-        Alert.alert("Play services not available");
       } else {
         Alert.alert("Sign-In Failed", error.message);
       }
     }
   };
 
-  // ----------------- Google Sign-Out -----------------
-  const signOut = async () => {
-    try {
-      await GoogleSignin.signOut();
-      Alert.alert("Signed out successfully");
-    } catch (error) {
-      console.error("Sign-Out Error:", error);
-    }
-  };
-
+  // ----------------- UI RENDER -----------------
   return (
     <ImageBackground
       source={require("../assets/loginbg.png")}
@@ -194,10 +240,8 @@ export default function LoginScreen({ navigation }) {
             />
           </TouchableOpacity>
         </View>
-        
 
         <View style={styles.rememberForgotContainer}>
-          {/* Remember Me */}
           <View style={styles.rememberSection}>
             <Checkbox
               value={rememberMe}
@@ -208,7 +252,7 @@ export default function LoginScreen({ navigation }) {
             <Text style={styles.rememberText}>Remember Me</Text>
           </View>
 
-          {/* Forgot Password */}
+          {/* ✅ This button calls the restored function */}
           <TouchableOpacity onPress={handleForgotPassword}>
             <Text style={styles.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
@@ -225,7 +269,6 @@ export default function LoginScreen({ navigation }) {
         </TouchableOpacity>
 
         <View style={styles.socialRow}>
-          {/* ✅ Google Sign-In button */}
           <TouchableOpacity style={styles.socialIcon} onPress={signIn}>
             <Ionicons name="logo-google" size={24} color="#DB4437" />
           </TouchableOpacity>
@@ -238,7 +281,6 @@ export default function LoginScreen({ navigation }) {
           </Text>
         </TouchableOpacity> 
 
-        {/* 👇 Browse Button (new) */}
         <TouchableOpacity onPress={() => navigation.navigate("Landing")}>
           <Text style={styles.browse}>
             Just want to explore?{" "}
@@ -309,24 +351,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   rememberForgotContainer: {
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "space-between",
-  width: "100%",
-  paddingHorizontal: 15,
-  marginBottom: 20,
-},
-
-rememberSection: {
-  flexDirection: "row",
-  alignItems: "center",
-},
-
-forgotText: {
-  color: "#fff",
-  fontSize: 13,
-  textDecorationLine: "underline",
-},
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    paddingHorizontal: 15,
+    marginBottom: 20,
+  },
+  rememberSection: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  forgotText: {
+    color: "#fff",
+    fontSize: 13,
+    textDecorationLine: "underline",
+  },
   rememberText: {
     color: "#fff",
     fontSize: 13,

@@ -14,6 +14,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { getFirestore, collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { app } from "./firebaseConfig";
+import { getStorage, ref, getDownloadURL } from "firebase/storage";
 
 export default function Customization({ route, navigation }) {
   const { product } = route.params || {};
@@ -26,7 +27,7 @@ export default function Customization({ route, navigation }) {
   const [selectedColor, setSelectedColor] = useState(null);
   const [selectedMaterial, setSelectedMaterial] = useState("Fabric");
   const [selectedAddOns, setSelectedAddOns] = useState([]);
-  const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploadedImages, setUploadedImages] = useState([]);
   const [notes, setNotes] = useState("");
   const [totalPrice, setTotalPrice] = useState(product?.price || 0);
   const [loading, setLoading] = useState(true);
@@ -34,13 +35,103 @@ export default function Customization({ route, navigation }) {
   const [availableMaterials, setAvailableMaterials] = useState([]);
   const [qty, setQty] = useState(1);
   const materials = ["Fabric", "Leather"];
+  const [uploading, setUploading] = useState(false);
+  const [sizeAdditions, setSizeAdditions] = useState({});
+  const [displayImage, setDisplayImage] = useState(null);
+  const [fullProduct, setFullProduct] = useState(null);
+
+useEffect(() => {
+  async function loadProduct() {
+    if (!product?.id) return;
+    try {
+      const docRef = doc(db, "products", product.id);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        setFullProduct({ id: snap.id, ...snap.data() });
+        // initial image
+        const defaultImg = product.image || snap.data()?.images?.[0];
+        setDisplayImage(defaultImg);
+      }
+    } catch (err) {
+      console.log("❌ Error loading full product:", err);
+    }
+  }
+  loadProduct();
+}, [product]);
 
 
+  const normalizeKey = (str = "") =>
+  str.toLowerCase()
+     .replace(/\s+/g, "")
+     .replace(/-/g, "")
+     .replace(/californiaking|cal-king|calking/g, "king");
+
+  
+  const getImageUrl = async (path) => {
+  try {
+    if (!path) return null;
+    const clean = path.replace(/^gs:\/\/[^/]+\//, "");
+    const storageRef = ref(getStorage(), clean);
+    return await getDownloadURL(storageRef);
+  } catch {
+    return null;
+  }
+};
+
+
+const resolveOptionImage = async (color, size) => {
+  if (!fullProduct) return null;
+
+  const colorKey = normalizeKey(color);   // "red" → "red"
+  const sizeKey = normalizeKey(size);     // "California King" → "king"
+
+  // Try imagesByOption first
+  const colorMap = fullProduct.imagesByOption?.[colorKey];
+  if (colorMap && colorMap[sizeKey]?.length > 0) {
+    const first = colorMap[sizeKey][0];
+    return first.startsWith("gs://") ? await getImageUrl(first) : first;
+  }
+
+  // imagesBySize fallback
+  const sizeMap = fullProduct.imagesBySize?.[sizeKey];
+  if (sizeMap && sizeMap[0]) {
+    const first = sizeMap[0];
+    return first.startsWith("gs://") ? await getImageUrl(first) : first;
+  }
+
+  // default
+  const fallback = fullProduct.images?.[0] || product.image;
+  return fallback.startsWith?.("gs://") ? await getImageUrl(fallback) : fallback;
+};
+
+
+
+useEffect(() => {
+  if (!selectedColor || !selectedSize || !fullProduct) return;
+
+  async function update() {
+    const url = await resolveOptionImage(selectedColor, selectedSize);
+    if (url) {
+      setDisplayImage(url);
+      console.log("🔄 Updated image:", url);
+    }
+  }
+
+  update();
+}, [selectedColor, selectedSize, fullProduct]);
+
+
+
+  const normalize = (s = "") => s.toLowerCase().trim();
   useEffect(() => {
     if (!product) return;
 
     const base = Number(product.basePrice || product.price || 0);
-    const sizePrice = selectedSize ? sizePrices[selectedSize] || base : base;
+    const sizePrice = selectedSize 
+  ? sizePrices[selectedSize] 
+    || sizePrices[normalize(selectedSize)] 
+    || base
+  : base;
     const extrasTotal = selectedAddOns.reduce((sum, a) => sum + (a.cents || 0), 0);
     setTotalPrice((sizePrice + extrasTotal) * qty);
   }, [selectedSize, sizePrices, selectedAddOns, qty]);
@@ -83,46 +174,75 @@ const colorToHex = (name) => {
   async function loadSizePrices() {
     try {
       if (!product?.type && !product?.category) return;
-      const typeLabel = product.type || product.category;
-      const qRules = query(collection(db, "sizePriceRules"), where("type", "==", typeLabel));
+
+      const typeLabelRaw = product.type || product.category || "";
+      const typeLabel = normalizeCategory(typeLabelRaw)?.trim();
+      if (!typeLabel) return;
+
+      const basePrice = Number(product.basePrice || product.price || 0);
+
+      const qRules = query(
+        collection(db, "sizePriceRules"),
+        where("type", "==", typeLabel)
+      );
+
       const snapRules = await getDocs(qRules);
+      const rules = [];
+      snapRules.forEach((d) => rules.push(d.data()));
 
+      // helper functions (match your web code)
+      const norm = (s) => (s || "").toLowerCase().trim();
+      const slug = (s) => norm(s).replace(/\s+/g, "-");
+
+      const byKey = new Map();
       const priceMap = {};
-      snapRules.forEach((d) => {
-        const data = d.data();
-        const mode = (data.mode || "delta").toLowerCase();
-        const value = Number(data.value || 0);
-        const base = Number(product.basePrice || product.price || 0);
-        let price = base;
+      const additionMap = {};
 
-        if (mode === "multiplier" || mode === "x" || mode === "mult") price = Math.round(base * value);
-        else if (mode === "absolute") price = value;
-        else price = base + value;
+      for (const r of rules) {
+        const mode = String(r.mode || "delta").toLowerCase();
+        const v = Number(r.value || 0);
+        let abs = basePrice;
 
-        priceMap[data.size] = price;
-      });
+        if (mode === "multiplier" || mode === "x" || mode === "mult") {
+          abs = Math.round(basePrice * (isNaN(v) ? 1 : v));
+        } else if (mode === "absolute") {
+          abs = isNaN(v) ? basePrice : v;
+        } else {
+          // delta mode (like all your Firestore docs)
+          abs = basePrice + (isNaN(v) ? 0 : v);
+        }
+
+        byKey.set(norm(r.size), { label: r.size, price: abs });
+      }
+
+      if (byKey.size) {
+        for (const [, rec] of byKey) {
+          const diff = rec.price - basePrice; 
+
+          // 1. Fill Price Map (Used for the Total Price calculation)
+          priceMap[rec.label] = rec.price;       
+          priceMap[norm(rec.label)] = rec.price; 
+          priceMap[slug(rec.label)] = rec.price; 
+
+          // 2. Fill Addition Map (Used for the +₱ Text on buttons)
+          // We must apply the same normalization here so the button can find the value!
+          additionMap[rec.label] = diff;
+          additionMap[norm(rec.label)] = diff;
+          additionMap[slug(rec.label)] = diff; 
+        }
+      }
 
       setSizePrices(priceMap);
+      setSizeAdditions(additionMap);
+
+      console.log("✅ Loaded size rules for", typeLabel, priceMap);
     } catch (e) {
-      console.warn("⚠️ Error loading sizePriceRules:", e);
+      console.warn("⚠️ sizePriceRules(type) read error:", e?.code || e);
     }
   }
 
   loadSizePrices();
 }, [product]);
-
-
-useEffect(() => {
-  if (!product) return;
-
-  const base = Number(product.basePrice || product.price || 0);
-  const sizePrice = selectedSize ? sizePrices[selectedSize] || base : base;
-
-  // include add-on costs
-  const extrasTotal = selectedAddOns.reduce((sum, a) => sum + (a.cents || 0), 0);
-  setTotalPrice(sizePrice + extrasTotal);
-}, [selectedSize, sizePrices, selectedAddOns]);
-
 
 
 
@@ -171,17 +291,31 @@ useEffect(() => {
           });
 
           // 🧩 --- Size Extraction ---
-          if (Array.isArray(data.sizeOptions))
-            data.sizeOptions.forEach((s) =>
-              typeof s === "string" ? sizeSet.add(s) : sizeSet.add(s.label)
-            );
-          if (Array.isArray(data.availableSizes))
-            data.availableSizes.forEach((s) => sizeSet.add(s));
-          if (data.options?.sizes)
-            data.options.sizes.forEach((s) =>
-              typeof s === "string" ? sizeSet.add(s) : sizeSet.add(s.label)
-            );
+          // Helper to force "3-Seater" format (Capitalize first letter)
+          const formatSize = (str) => {
+            if (!str) return "";
+            const s = String(str).trim();
+            return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+          };
 
+          // 🧩 --- Size Extraction ---
+          if (Array.isArray(data.sizeOptions)) {
+            data.sizeOptions.forEach((s) =>
+              typeof s === "string" 
+                ? sizeSet.add(formatSize(s)) 
+                : sizeSet.add(formatSize(s.label))
+            );
+          }
+          if (Array.isArray(data.availableSizes)) {
+            data.availableSizes.forEach((s) => sizeSet.add(formatSize(s)));
+          }
+          if (data.options?.sizes) {
+            data.options.sizes.forEach((s) =>
+              typeof s === "string" 
+                ? sizeSet.add(formatSize(s)) 
+                : sizeSet.add(formatSize(s.label))
+            );
+          }
           // 🧩 --- Additional Features Extraction ---
           Object.keys(data).forEach((key) => {
             if (key.startsWith("has") && data[key] === true) {
@@ -259,31 +393,42 @@ useEffect(() => {
 
 
   const toggleAddOn = (item) => {
-    let updated = [...selectedAddOns];
-    const exists = selectedAddOns.find((a) => a.key === item.key);
+  // If user selects the same one → unselect it
+  if (selectedAddOns[0]?.key === item.key) {
+    setSelectedAddOns([]);
+    return;
+  }
 
-    if (exists) updated = updated.filter((a) => a.key !== item.key);
-    else updated.push(item);
+  // Otherwise select only this one
+  setSelectedAddOns([item]);
+};
 
-    setSelectedAddOns(updated);
-    const extrasTotal = updated.reduce((sum, a) => sum + (a.cents || 0), 0);
-    setTotalPrice((product?.price || 0) + extrasTotal);
-  };
 
-  const handleImageUpload = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets?.length > 0) {
-        setUploadedImage(result.assets[0].uri);
-      }
-    } catch {
-      Alert.alert("Error", "Could not upload image.");
+const handleImageUpload = async () => {
+  try {
+    setUploading(true); // Start loading
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+      allowsMultipleSelection: true,
+      selectionLimit: 3,
+    });
+
+    if (!result.canceled && result.assets?.length > 0) {
+      const newImages = result.assets.map((a) => a.uri);
+      const total = [...uploadedImages, ...newImages].slice(0, 3);
+      setUploadedImages(total);
     }
-  };
+  } catch {
+    Alert.alert("Error", "Could not upload images.");
+  } finally {
+    setUploading(false); // Stop loading
+  }
+};
+
+
 
   if (loading) {
     return (
@@ -305,19 +450,13 @@ useEffect(() => {
         </Text>
 
         <View style={styles.imageBox}>
-          <Image
-            source={
-              product?.image
-                ? { uri: product.image }
-                : require("../assets/sofa.png")
-            }
-            style={styles.mainImage}
-          />
-          <Text style={styles.productName}>{product?.name}</Text>
-          <Text style={styles.productPrice}>
-            ₱{product?.price?.toLocaleString()}
-          </Text>
-        </View>
+        <Image
+          source={{ uri: displayImage || product.image }}
+          style={styles.mainImage}
+        />
+        <Text style={styles.productName}>{product?.name}</Text>
+        <Text style={styles.productPrice}>₱{product?.price?.toLocaleString()}</Text>
+      </View>
 
         {/* SIZE */}
         <View style={styles.section}>
@@ -325,30 +464,55 @@ useEffect(() => {
           {availableSizes.length > 0 ? (
             <View style={styles.optionRow}>
               {availableSizes.map((size) => {
-              const price = sizePrices[size] || product.price || product.basePrice || 0;
-              return (
-                <TouchableOpacity
-                  key={size}
-                  style={[
-                    styles.optionBtn,
-                    selectedSize === size && styles.optionSelected,
-                  ]}
-                  onPress={() => setSelectedSize(size)}
-                >
-                  <Text
-                    style={[
-                      styles.optionText,
-                      selectedSize === size && styles.optionTextSelected,
-                    ]}
-                  >
-                    {size}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
-                    ₱{price.toLocaleString()}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+  const normalizedSize = sizePrices[size] ? size : size.toLowerCase();
+  const displayPrice = sizePrices[normalizedSize] || product.price || product.basePrice || 0;
+  return (
+    <TouchableOpacity
+      key={size}
+      style={[
+        styles.optionBtn,
+        selectedSize === size && styles.optionSelected,
+
+      ]}
+      onPress={() => setSelectedSize(size)}
+    >
+      <Text
+        style={[
+          styles.optionText,
+          selectedSize === size && styles.optionTextSelected,
+        ]}
+      >
+        {size}
+      </Text>
+      <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
+        {(() => {
+  const norm = (s) => (s || "").toLowerCase().trim();
+  const slug = (s) => norm(s).replace(/\s+/g, "-");
+
+  const add =
+    sizeAdditions[size] ??
+    sizeAdditions[norm(size)] ??
+    sizeAdditions[slug(size)] ??
+    0;
+
+  if (add === 0) return null; // hide "+₱0" if it's base size
+
+  const formatted =
+    add > 0
+      ? `+₱${add.toLocaleString()}`
+      : `-₱${Math.abs(add).toLocaleString()}`;
+
+  return (
+    <Text style={{ fontSize: 12, color: "#2c6e49", marginTop: 3 }}>
+      {formatted}
+    </Text>
+  );
+})()}
+      </Text>
+    </TouchableOpacity>
+  );
+})}
+
 
 
             </View>
@@ -458,17 +622,25 @@ useEffect(() => {
         {/* NOTES + UPLOAD */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>5. ADD NOTES / DESIGN PHOTO</Text>
-          {uploadedImage && (
-            <View style={styles.imagePreviewContainer}>
-              <Image source={{ uri: uploadedImage }} style={styles.smallImage} />
-              <TouchableOpacity
-                style={styles.removeImgBtn}
-                onPress={() => setUploadedImage(null)}
-              >
-                <Ionicons name="trash-outline" size={16} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          )}
+          {uploadedImages.length > 0 && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 10 }}>
+            {uploadedImages.map((uri, idx) => (
+              <View key={idx} style={styles.imagePreviewContainer}>
+                <Image source={{ uri }} style={styles.smallImage} />
+                <TouchableOpacity
+                  style={styles.removeImgBtn}
+                  onPress={() => {
+                    const updated = uploadedImages.filter((_, i) => i !== idx);
+                    setUploadedImages(updated);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
+
           <TextInput
             style={styles.textBox}
             placeholder="Write your notes or upload design..."
@@ -477,19 +649,26 @@ useEffect(() => {
             value={notes}
             onChangeText={setNotes}
           />
-          {!uploadedImage && (
+          {uploading ? (
+            <View style={{ marginTop: 10, alignItems: "center" }}>
+              <ActivityIndicator size="small" color="#1B3D36" />
+              <Text style={{ color: "#555", marginTop: 4 }}>Uploading image...</Text>
+            </View>
+          ) : uploadedImages.length < 3 && (
             <TouchableOpacity style={styles.uploadBtn} onPress={handleImageUpload}>
               <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
               <Text style={styles.uploadText}>Upload Design Photo</Text>
             </TouchableOpacity>
           )}
+
+          
         </View>
       </ScrollView>
         {/* 🧮 Sticky Bottom Bar */}
       <View style={styles.stickyBar}>
         <View style={styles.totalRow}>
         <Text style={styles.totalLabel}>TOTAL</Text>
-        <Text style={styles.totalValue}>₱{totalPrice.toLocaleString()}</Text>
+        <Text style={styles.totalValue}>₱{(totalPrice).toLocaleString()}</Text>
       </View>
 
         <View style={styles.bottomControls}>
@@ -509,29 +688,58 @@ useEffect(() => {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            style={styles.buyNowBtn}
-            onPress={() => {
-              const customizedProduct = {
-                id: product?.id || "custom_" + Date.now(),
-                name: product?.name || "Custom Product",
-                category: product?.category || "Custom",
-                imageUrl: uploadedImage || product?.image || product?.images?.[0],
-                uploadedImage: uploadedImage || null, // ✅ added field
-                price: totalPrice,
-                qty,
-                selectedColor: selectedColor || "Default",
-                selectedSize: selectedSize || "Standard",
-                selectedMaterial: selectedMaterial || "Fabric",
-                additionals: selectedAddOns.map((item) => item.label),
-                notes,
-                type: "customization",
-                basePrice: product?.basePrice || product?.price,
-              };
+            <TouchableOpacity
+              style={styles.buyNowBtn}
+              onPress={() => {
+                // 🛑 Validation Checks
+                if (!selectedSize) {
+                  Alert.alert("Missing Option", "Please select a size before continuing.");
+                  return;
+                }
 
+                if (availableMaterials.length > 0 && !selectedMaterial) {
+                  Alert.alert("Missing Option", "Please select a material before continuing.");
+                  return;
+                }
 
-              navigation.navigate("CheckoutPage", { product: customizedProduct });
-            }}
+                if (uploading) {
+                  Alert.alert("Uploading in Progress", "Please wait until your images are finished uploading.");
+                  return;
+                }
+
+                // ✅ Proceed if all required fields are filled
+                const customizedProduct = {
+                  id: product?.id || "custom_" + Date.now(),
+                  name: product?.name || "Custom Product",
+                  category: product?.category || "Custom",
+                  // ✅ Keep the furniture thumbnail constant
+                  imageUrls: [
+                    product?.thumbnail ||
+                    product?.thumbnailUrl ||
+                    product?.image ||
+                    product?.images?.[0] ||
+                    "https://via.placeholder.com/150"
+                  ],
+
+                  // ✅ Store user uploads separately
+                  uploadedImages: uploadedImages.length > 0 ? uploadedImages : [],
+
+                  price: totalPrice,
+                  originalImage: product?.image || product?.images?.[0],
+                  qty,
+                  selectedColor,
+                  selectedSize,
+                  selectedMaterial,
+                  additionals: selectedAddOns.map((item) => item.label),
+                  notes,
+                  type: "customization",
+                  basePrice: product?.basePrice || product?.price,
+                };
+
+                console.log("➡️ Customization → Checkout payload:", customizedProduct);
+                navigation.navigate("CheckoutPage", { product: customizedProduct });
+              }}
+
           >
             <Text style={styles.buyNowText}>BUY NOW</Text>
           </TouchableOpacity>
@@ -559,9 +767,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   imageBox: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 12,
     marginBottom: 16,
     alignItems: "center",
     shadowColor: "#000",
@@ -571,7 +776,7 @@ const styles = StyleSheet.create({
   },
   mainImage: {
     width: "100%",
-    height: 200,
+    height: 250,
     borderRadius: 10,
     marginBottom: 10,
   },

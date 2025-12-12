@@ -14,11 +14,21 @@ import CheckBox from "@react-native-community/checkbox";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { serverTimestamp } from "firebase/firestore";
 import { app } from "./firebaseConfig";
+import { KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard } from "react-native";
+
 
 
 export default function CheckoutPage({ route, navigation }) {
   const { product } = route.params || {};
   console.log("Product passed:", product);
+
+  
+
+const getSubtotal = () => {
+  if (product?.type === "repair") return Number(product?.total || 0);
+  if (product?.type === "customization") return Number(product?.price || 0);
+  return Number(product?.price || 0);
+};
 
   const auth = getAuth(app);
 
@@ -46,24 +56,47 @@ export default function CheckoutPage({ route, navigation }) {
   }, []);
 
   // Handle "Continue to Pay"
-  const handleContinueToPay = async () => {
-    console.log("🟢 Continue to Pay clicked");
-    const user = auth.currentUser;
+const handleContinueToPay = async () => {
+  console.log("🟢 Continue to Pay clicked");
+  const user = auth.currentUser;
 
-    if (!user) {
-      Alert.alert("Login Required", "Please log in before placing an order.");
-      navigation.navigate("LoginPage");
-      return;
-    }
+  // 🔐 Authentication check
+  if (!user) {
+    Alert.alert("Login Required", "Please log in before placing an order.");
+    navigation.navigate("LoginPage");
+    return;
+  }
 
-    if (!streetAddress || !city || !state || !phone) {
-      Alert.alert("Missing Information", "Please complete your shipping details.");
-      return;
-    }
+  // 🧾 Email validation
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!userEmail || !emailPattern.test(userEmail)) {
+    Alert.alert("Invalid Email", "Please enter a valid email address (e.g. name@example.com).");
+    return;
+  }
+
+  // 🧍 Name validation
+  if (!userName || userName.trim().length < 2) {
+    Alert.alert("Missing Name", "Please enter your full name.");
+    return;
+  }
+
+  // 🚚 Address validation
+  if (!streetAddress || !city || !state) {
+    Alert.alert("Missing Address", "Please complete your shipping address details.");
+    return;
+  }
+
+  // ☎️ Phone number validation
+  const phoneDigitsOnly = phone.replace(/\D/g, ""); // remove non-digits
+  if (!phoneDigitsOnly.match(/^09\d{9}$/)) {
+    Alert.alert("Invalid Phone", "Please enter a valid 11-digit Philippine number (e.g. 09XXXXXXXXX).");
+    return;
+  }
+
 
     try {
       const shippingFee = 510;
-      const subtotal = Number(product?.price || 0);
+      const subtotal = getSubtotal();
       const discount = 0;
       const total = subtotal + shippingFee - discount;
 
@@ -84,7 +117,7 @@ export default function CheckoutPage({ route, navigation }) {
             productId: product?.id,
             name: product?.name,
             title: product?.name,
-            image: product?.imageUrl,
+            image: product?.imageUrls?.[0] || product?.uploadedImages?.[0] || product?.image || "",
             price: product?.price,
             qty: product?.qty || 1,
             selectedColor: product?.selectedColor || "",
@@ -92,7 +125,7 @@ export default function CheckoutPage({ route, navigation }) {
             selectedMaterial: product?.selectedMaterial || "",
             additionals: product?.additionals || [],
             notes: product?.notes || "",
-            type: product?.type || "standard",
+            type: product?.type || "Catalog",
           },
         ],
 
@@ -111,8 +144,10 @@ export default function CheckoutPage({ route, navigation }) {
       };
 
       // ✅ Navigate to PaymentPage with full order details
+      console.log("➡️ Checkout → Payment orderData:", orderData);
+      console.log("   Product passed along:", product?.type, product);
       navigation.navigate("PaymentPage", {
-        order: { ...orderData },
+        order: { ...orderData, product },
       });
 
     } catch (error) {
@@ -122,200 +157,234 @@ export default function CheckoutPage({ route, navigation }) {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 60 }}
-    >
-      {/* 🪑 Header */}
-      <Text style={styles.brand}>FURNITUNE</Text>
+  <KeyboardAvoidingView
+    style={{ flex: 1 }}
+    behavior={Platform.OS === "ios" ? "padding" : "height"}
+    keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0} // adjust if needed
+  >
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <ScrollView
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 80 }}
+        keyboardShouldPersistTaps="handled"
+      >
 
-      {/* 🧾 Order Summary */}
-      <Text style={styles.sectionTitle}>ORDER SUMMARY</Text>
-      <View style={styles.orderCard}>
-        <View style={styles.orderRow}>
-          <Image
-            source={{
-              uri: product?.uploadedImage || product?.imageUrl,
-            }}
-            style={styles.productImage}
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.productName}>{product?.name || "Unnamed Product"}</Text>
-            {product?.type === "repair" && (
-            <>
-              <Text style={styles.productOption}>Type: {product?.name}</Text>
-              <Text style={styles.productOption}>Cover: {product?.selectedColor}</Text>
-              <Text style={styles.productOption}>Frame: {product?.selectedMaterial}</Text>
-              {product?.notes ? (
-                <Text style={styles.productOption}>Notes: {product.notes}</Text>
-              ) : null}
-            </>
-          )}
+        {/* 🧾 Order Summary */}
+        <Text style={styles.sectionTitle}>ORDER SUMMARY</Text>
+        <View style={styles.orderCard}>
+          <View style={styles.orderRow}>
+            <Image
+              source={{
+                uri:
 
-            {product?.type === "customization" && product?.uploadedImage && (
-              <Text style={{ fontSize: 12, color: "#2c6e49", fontStyle: "italic" }}>
-                Custom Design Uploaded
-              </Text>
-            )}
-            <Text style={styles.productQty}>Qty: {product?.qty || 1}</Text>
+                product?.type === "cart"
+                ? product?.items?.[0]?.imageUrl ||
+                  product?.items?.[0]?.image ||
+                  "https://via.placeholder.com/150"
+                
+               : product?.type === "repair"
+                  ? product?.uploadedImages?.[0] ||
+                    product?.imageUrl ||
+                    "https://via.placeholder.com/150"
 
-            {/* Standard or Custom Fields */}
-            {product?.type === "customization" ? (
-              <>
-                {product?.selectedSize && (
-                  <Text style={styles.productOption}>Size: {product.selectedSize}</Text>
-                )}
-                {product?.selectedColor && (
-                  <Text style={styles.productOption}>Color: {product.selectedColor}</Text>
-                )}
-                {product?.selectedMaterial && (
-                  <Text style={styles.productOption}>
-                    Material: {product.selectedMaterial}
-                  </Text>
-                )}
-                {product?.additionals?.length > 0 && (
-                  <Text style={styles.productOption}>
-                    Add-ons: {product.additionals.join(", ")}
-                  </Text>
-                )}
-                {product?.notes && (
-                  <Text style={styles.productOption}>Notes: {product.notes}</Text>
-                )}
-              </>
-            ) : (
-              <>
-                {/* For Standard Products */}
-                {product?.selectedSize && (
-                  <Text style={styles.productOption}>Size: {product.selectedSize}</Text>
-                )}
-                {product?.selectedColor && (
-                  <Text style={styles.productOption}>Color: {product.selectedColor}</Text>
-                )}
-              </>
-            )}
+                  // 🎨 Customization orders
+                : product?.type === "customization"
+                  ? product?.imageUrls?.[0] ||
+                    product?.cover ||
+                    product?.imageUrl ||
+                    product?.thumbnail ||
+                    product?.thumbnailUrl ||
+                    "https://via.placeholder.com/150"
+
+
+                  // 🛋 Standard product orders
+                  : product?.imageUrl ||               // ✅ add this first
+                  product?.thumbnail ||
+                  product?.thumbnailUrl ||
+                  (product?.images && product.images.find((img) => img.toLowerCase().includes("thumb"))) ||
+                  (product?.imageUrls && product.imageUrls.find((img) => img.toLowerCase().includes("thumb"))) ||
+                  product?.imageUrls?.[0] ||
+                  product?.image ||
+                  "https://via.placeholder.com/150"
+
+              }}
+              style={styles.productImage}
+            />
+
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.productName}>{product?.name || "Unnamed Product"}</Text>
+              {product?.type === "repair" && (
+                <>
+                  <Text style={styles.productOption}>Type: {product?.name}</Text>
+                  <Text style={styles.productOption}>Cover: {product?.selectedColor}</Text>
+                  <Text style={styles.productOption}>Frame: {product?.selectedMaterial}</Text>
+                  {product?.notes ? (
+                    <Text style={styles.productOption}>Notes: {product.notes}</Text>
+                  ) : null}
+                </>
+              )}
+              {product?.type === "customization" && product?.uploadedImage && (
+                <Text style={{ fontSize: 12, color: "#2c6e49", fontStyle: "italic" }}>
+                  Custom Design Uploaded
+                </Text>
+              )}
+              <Text style={styles.productQty}>Qty: {product?.qty || 1}</Text>
+
+              {product?.selectedSize && (
+                <Text style={styles.productOption}>Size: {product.selectedSize}</Text>
+              )}
+              {product?.selectedColor && (
+                <Text style={styles.productOption}>Color: {product.selectedColor}</Text>
+              )}
+            </View>
+            <Text style={styles.productPrice}>₱{getSubtotal().toLocaleString()}</Text>
+
           </View>
-          <Text style={styles.productPrice}>
-            ₱{Number(product?.price || 0).toLocaleString()}
-          </Text>
+
+          <View style={styles.divider} />
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.label}>Subtotal</Text>
+            <Text style={styles.value}>₱{getSubtotal().toFixed(2)}</Text>
+
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.label}>Discount</Text>
+            <Text style={styles.value}>₱0.00</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.label}>Shipping & Handling Fee</Text>
+            <Text style={styles.value}>₱510.00</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.totalLabel}>TOTAL</Text>
+            <Text style={styles.totalValue}>
+              ₱{(getSubtotal() + 510).toFixed(2)}
+            </Text>
+          </View>
         </View>
 
+        {/* ✉️ Email */}
+        <Text style={styles.sectionTitle}>EMAIL</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Enter your email address"
+           placeholderTextColor="#565656ff"
+          value={userEmail}
+          onChangeText={setUserEmail}
+        />
 
-        <View style={styles.divider} />
-
-        <View style={styles.summaryRow}>
-          <Text style={styles.label}>Subtotal</Text>
-          <Text style={styles.value}>₱{Number(product?.price || 0).toFixed(2)}</Text>
+        <View style={styles.checkboxRow}>
+          <CheckBox value={checked} onValueChange={setChecked} />
+          <Text style={styles.checkboxLabel}>Sign up for news & special offers?</Text>
         </View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.label}>Discount</Text>
-          <Text style={styles.value}>₱0.00</Text>
+
+        {/* 🚚 Shipping Address */}
+        <Text style={styles.sectionTitle}>SHIPPING ADDRESS</Text>
+        <View style={styles.row}>
+          <TextInput
+            style={[styles.input, styles.halfInput]}
+            placeholder="*First Name"
+            placeholderTextColor="#565656ff"
+            value={userName?.split(" ")[0] || ""}
+            onChangeText={(text) =>
+              setUserName((prev) => text + " " + (prev.split(" ")[1] || ""))
+            }
+          />
+          <TextInput
+            style={[styles.input, styles.halfInput]}
+            placeholder="*Last Name"
+             placeholderTextColor="#565656ff"
+            value={userName?.split(" ")[1] || ""}
+            onChangeText={(text) =>
+              setUserName((prev) => (prev.split(" ")[0] || "") + " " + text)
+            }
+          />
         </View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.label}>Shipping & Handling Fee</Text>
-          <Text style={styles.value}>₱510.00</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="*Street Address"
+           placeholderTextColor="#565656ff"
+          value={streetAddress}
+          onChangeText={setStreetAddress}
+        />
+        <TextInput
+          style={styles.input}
+          placeholder="Apt/Suite"
+           placeholderTextColor="#565656ff"
+          value={apt}
+          onChangeText={setApt}
+        />
+
+        <View style={styles.row}>
+          <TextInput
+            style={[styles.input, styles.thirdInput]}
+            placeholder="*City"
+             placeholderTextColor="#565656ff"
+            value={city}
+            onChangeText={setCity}
+          />
+          <TextInput
+            style={[styles.input, styles.thirdInput]}
+            placeholder="Province"
+             placeholderTextColor="#565656ff"
+            value={state}
+            onChangeText={setState}
+          />
+          <TextInput
+            style={[styles.input, styles.thirdInput]}
+            placeholder="Zip Code"
+             placeholderTextColor="#565656ff"
+            value={zip}
+            onChangeText={setZip}
+          />
         </View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.totalLabel}>TOTAL</Text>
-          <Text style={styles.totalValue}>
-            ₱{(Number(product?.price || 0) + 510).toFixed(2)}
-          </Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="*Phone Number (11 digits)"
+           placeholderTextColor="#565656ff"
+          keyboardType="number-pad"
+          maxLength={11}
+          value={phone}
+          onChangeText={(text) => {
+            // only allow digits
+            const numeric = text.replace(/[^0-9]/g, "");
+            setPhone(numeric);
+          }}
+        />
+
+
+        {/* 📦 Optional Notes */}
+        <Text style={styles.sectionTitle}>ORDER NOTES</Text>
+        <TextInput
+          style={[styles.input, { textAlignVertical: "top", height: 100 }]}
+          placeholder="Add any special delivery notes..."
+           placeholderTextColor="#565656ff"
+          multiline
+        />
+
+        {/* Buttons */}
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={styles.cancelBtn}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.cancelText}>CANCEL</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.payBtn} onPress={handleContinueToPay}>
+            <Text style={styles.payText}>CONTINUE TO PAY</Text>
+          </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
+    </TouchableWithoutFeedback>
+  </KeyboardAvoidingView>
+);
 
-      {/* ✉️ Email */}
-      <Text style={styles.sectionTitle}>EMAIL</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Enter your email address"
-        placeholderTextColor="#999"
-        value={userEmail}
-        onChangeText={setUserEmail}
-      />
-
-      <View style={styles.checkboxRow}>
-        <CheckBox value={checked} onValueChange={setChecked} />
-        <Text style={styles.checkboxLabel}>Sign up for news & special offers?</Text>
-      </View>
-
-      {/* 🚚 Shipping Address */}
-      <Text style={styles.sectionTitle}>SHIPPING ADDRESS</Text>
-      <View style={styles.row}>
-        <TextInput
-          style={[styles.input, styles.halfInput]}
-          placeholder="*First Name"
-          value={userName?.split(" ")[0] || ""}
-          onChangeText={(text) =>
-            setUserName((prev) => text + " " + (prev.split(" ")[1] || ""))
-          }
-        />
-        <TextInput
-          style={[styles.input, styles.halfInput]}
-          placeholder="*Last Name"
-          value={userName?.split(" ")[1] || ""}
-          onChangeText={(text) =>
-            setUserName((prev) => (prev.split(" ")[0] || "") + " " + text)
-          }
-        />
-      </View>
-
-      <TextInput
-        style={styles.input}
-        placeholder="*Street Address"
-        value={streetAddress}
-        onChangeText={setStreetAddress}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Apt/Suite"
-        value={apt}
-        onChangeText={setApt}
-      />
-
-      <View style={styles.row}>
-        <TextInput
-          style={[styles.input, styles.thirdInput]}
-          placeholder="*City"
-          value={city}
-          onChangeText={setCity}
-        />
-        <TextInput
-          style={[styles.input, styles.thirdInput]}
-          placeholder="*State"
-          value={state}
-          onChangeText={setState}
-        />
-        <TextInput
-          style={[styles.input, styles.thirdInput]}
-          placeholder="Zip/Postal Code"
-          value={zip}
-          onChangeText={setZip}
-        />
-      </View>
-
-      <TextInput
-        style={styles.input}
-        placeholder="*Phone Number"
-        keyboardType="phone-pad"
-        value={phone}
-        onChangeText={setPhone}
-      />
-
-      {/* Buttons */}
-      <View style={styles.buttonRow}>
-        <TouchableOpacity
-          style={styles.cancelBtn}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.cancelText}>CANCEL</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.payBtn} onPress={handleContinueToPay}>
-          <Text style={styles.payText}>CONTINUE TO PAY</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
-  );
 }
 
 const styles = StyleSheet.create({
@@ -412,7 +481,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     fontSize: 13,
-    color: "#333",
+    color: "#000000ff",
     marginBottom: 10,
   },
   row: {

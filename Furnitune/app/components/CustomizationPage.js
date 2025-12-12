@@ -81,21 +81,28 @@ export default function ProductPage({ navigation, route }) {
           querySnapshot.docs.map(async (doc) => {
             const data = doc.data();
 
-            // Try to load thumbnail, fallback to first image
-            let imageUrl = null;
-            if (data.images) {
+            // ✅ Always prioritize the actual product image, not the thumbnail
+              let imageUrl = null;
+
               try {
-                imageUrl = await getDownloadURL(ref(storage, data.thumbnail));
+                if (data.images?.length > 0) {
+                  // Fetch the first image in the array
+                  imageUrl = await getDownloadURL(ref(storage, data.images[0]));
+                } else if (data.defaultImagePath) {
+                  // If images array is empty, try defaultImagePath
+                  imageUrl = await getDownloadURL(ref(storage, data.defaultImagePath));
+                } else if (data.thumbnail) {
+                  // Fallback to thumbnail if no main image exists
+                  imageUrl = await getDownloadURL(ref(storage, data.thumbnail));
+                } else {
+                  // Last resort placeholder
+                  imageUrl = "https://via.placeholder.com/150";
+                }
               } catch (err) {
-                console.log("Thumbnail fetch error:", err);
+                console.log("⚠️ Image fetch error:", err);
+                imageUrl = "https://via.placeholder.com/150";
               }
-            } else if (data.images?.length > 0) {
-              try {
-                imageUrl = await getDownloadURL(ref(storage, data.images[0]));
-              } catch (err) {
-                console.log("Image fetch error:", err);
-              }
-            }
+
 
             return {
               id: doc.id,
@@ -213,7 +220,7 @@ export default function ProductPage({ navigation, route }) {
   // Sidebar filter component
   const FilterSidebar = () => (
   <ScrollView style={styles.filterContainer} showsVerticalScrollIndicator={false}>
-    <Text style={styles.sidebarTitle}>ALL FURNITURES</Text>
+    <Text style={styles.sidebarTitle}>CUSTOMIZATION</Text>
 
     {/* Type */}
     <View style={styles.section}>
@@ -343,7 +350,7 @@ export default function ProductPage({ navigation, route }) {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.headerRow}>
-        <Text style={styles.header}>ALL FURNITURES</Text>
+        <Text style={styles.header}>CUSTOMIZATION</Text>
       </View>
 
       {/* Product list */}

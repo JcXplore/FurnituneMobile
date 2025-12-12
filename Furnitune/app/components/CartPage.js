@@ -224,38 +224,38 @@ export default function CartPage() {
             subtotal === 0 && { backgroundColor: "#ccc" },
           ]}
           disabled={subtotal === 0}
-          onPress={async () => {
-            try {
-              const selectedItemsData = cartItems.filter((item) =>
-                selected.includes(item.id)
-              );
+          onPress={() => {
+  const selectedItemsData = cartItems.filter((item) =>
+    selected.includes(item.id)
+  );
 
-              if (selectedItemsData.length === 0) {
-                Alert.alert("No items selected", "Please select at least one item.");
-                return;
-              }
+  if (selectedItemsData.length === 0) {
+    Alert.alert("No items selected", "Please select at least one item.");
+    return;
+  }
 
-              const total = selectedItemsData.reduce(
-                (sum, item) => sum + (item.price || 0) * (item.qty || 1),
-                0
-              );
+  const total = selectedItemsData.reduce(
+    (sum, item) => sum + (item.price || 0) * (item.qty || 1),
+    0
+  );
 
-              const ordersRef = collection(db, "orders");
-              const newOrder = await addDoc(ordersRef, {
-                userId: user.uid,
-                items: selectedItemsData,
-                subtotal: total,
-                shippingFee: 510,
-                total: total + 510,
-                status: "processing_order",
-                createdAt: new Date(),
-              });
+   const selectedItem = selectedItemsData[0];
+  // ✅ Navigate to CheckoutPage instead of creating an order
+  navigation.navigate("CheckoutPage", {
+    product: {
+      id: selectedItem.productId,
+      name: selectedItem.name,
+      imageUrl: selectedItem.imageUrl,
+      price: selectedItem.price ?? 0,
+      selectedColor: selectedItem.selectedColor || "",
+      selectedSize: selectedItem.selectedSize || "",
+      qty: selectedItem.qty,
+      note: selectedItem.note || "",
+      type: "catalog",
+    },
+  });
+}}
 
-              navigation.navigate("OrderPage", { orderId: newOrder.id });
-            } catch (error) {
-              console.error("Error creating order:", error);
-            }
-          }}
         >
           <Text style={styles.checkoutText}>
             {subtotal === 0 ? "SELECT ITEMS" : "CHECK OUT"}

@@ -8,8 +8,9 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import { auth } from "./firebaseConfig";
+import { auth, db } from "./firebaseConfig";
 import { sendEmailVerification } from "firebase/auth";
+import { updateDoc, doc } from "firebase/firestore";
 
 export default function EmailVerification({ navigation }) {
   const [verified, setVerified] = useState(false);
@@ -18,7 +19,15 @@ export default function EmailVerification({ navigation }) {
   useEffect(() => {
     const interval = setInterval(async () => {
       await auth.currentUser?.reload();
-      if (auth.currentUser?.emailVerified) {
+      const user = auth.currentUser;
+
+      if (user?.emailVerified) {
+        // ✅ Update Firestore
+        await updateDoc(doc(db, "users", user.uid), {
+          emailVerified: true,
+          updatedAt: new Date(),
+        });
+
         setVerified(true);
         clearInterval(interval);
       }
@@ -88,6 +97,7 @@ export default function EmailVerification({ navigation }) {
     </ImageBackground>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {

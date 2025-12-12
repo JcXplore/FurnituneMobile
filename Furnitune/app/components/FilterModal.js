@@ -17,16 +17,15 @@ export default function FilterModal({
   filters,
   toggleFilter,
   resetFilters,
-  mode = "department",          // "department" or "allTypes"
-  selectedDepartment = "All",   // used only in department mode
+  mode = "department",
+  selectedDepartment = "All",
 }) {
-  // 🔹 Furniture types for allTypes mode
+  
   const allFurnitureTypes = useMemo(
     () => ["Beds", "Sofas", "Chairs", "Tables", "Sectionals", "Ottomans"],
     []
   );
 
-  // 🔹 Furniture types by department
   const furnitureTypesByDepartment = useMemo(
     () => ({
       "living-room": ["Sofas", "Chairs", "Tables", "Sectionals", "Ottomans"],
@@ -38,14 +37,19 @@ export default function FilterModal({
     [allFurnitureTypes]
   );
 
-  // 🔹 Decide which types to display
   const availableTypes =
     mode === "allTypes"
       ? allFurnitureTypes
       : furnitureTypesByDepartment[selectedDepartment] || [];
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} statusBarTranslucent>
+    <Modal 
+      visible={visible} 
+      animationType="slide" 
+      transparent={false} 
+      statusBarTranslucent
+      onRequestClose={onClose} 
+    >
       <View
         style={{
           flex: 1,
@@ -72,7 +76,7 @@ export default function FilterModal({
           }}
         >
           <Text style={{ fontSize: 20, fontWeight: "700", color: "#2C6E49", letterSpacing: 0.5 }}>
-            Filters
+            {mode === "allTypes" ? "ALL FURNITURES" : selectedDepartment.replace("-", " ").toUpperCase()}
           </Text>
           <TouchableOpacity onPress={onClose}>
             <Ionicons name="close" size={26} color="#333" />
@@ -82,51 +86,17 @@ export default function FilterModal({
         {/* 🔹 Scrollable Filters */}
         <ScrollView
           style={{ flex: 1, backgroundColor: "#FAF8F2", paddingHorizontal: 20 }}
-          contentContainerStyle={{ paddingBottom: 100 }}
+          contentContainerStyle={{ paddingBottom: 120, paddingTop: 10 }} // Increased paddingBottom so last item isn't hidden
           showsVerticalScrollIndicator={false}
         >
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: "bold",
-              letterSpacing: 1,
-              color: "#2C2C2C",
-              textTransform: "uppercase",
-              marginBottom: 14,
-              borderBottomWidth: 0.6,
-              borderBottomColor: "#B8B6AE",
-              paddingBottom: 8,
-            }}
-          >
-            {mode === "allTypes"
-              ? "All Furnitures"
-              : selectedDepartment.replace("-", " ").toUpperCase()}
-          </Text>
-
-          {/* ✅ Furniture Types */}
           {availableTypes.length > 0 &&
             renderSection("Type", availableTypes, filters, toggleFilter)}
 
-          {/* ✅ Common Filters */}
-          {renderSection(
-            "Sizes",
-            ['Smaller than 60"', '60" - 69"', '70" - 79"', '80" - 89"', '90" - 99"'],
-            filters,
-            toggleFilter
-          )}
-          {renderSection("Materials", ["Fabrics", "Leather", "Wood"], filters, toggleFilter)}
-          {renderSection(
-            "Number of Seats",
-            ["4 Seater", "6 Seater", "8 Seater", "Extendable"],
-            filters,
-            toggleFilter
-          )}
-          {renderSection(
-            "Product Shape",
-            ["Rectangle", "Round", "Square"],
-            filters,
-            toggleFilter
-          )}
+          {renderSection("Cover Material", ["Fabrics", "Leather"], filters, toggleFilter)}
+          
+          {renderSection("Price", ["Under ₱5,000", "₱5,000–₱9,999", "₱10,000–₱14,999", "₱15,000+"], filters, toggleFilter)}
+          
+          {renderSection("Frame Material", ["Metal", "Wood"], filters, toggleFilter)}
         </ScrollView>
 
         {/* 🔹 Footer Buttons */}
@@ -138,35 +108,33 @@ export default function FilterModal({
             right: 0,
             backgroundColor: "#FAF8F2",
             paddingHorizontal: 20,
-            paddingVertical: 16,
+            
+            // ✅ FIX: Add extra padding at bottom to lift buttons above Android Nav Bar
+            paddingTop: 16,
+            paddingBottom: Platform.OS === "android" ? 50 : 30, 
+
             borderTopWidth: 1,
             borderTopColor: "#D8D6CC",
             elevation: 8,
-            shadowColor: "#000",
-            shadowOpacity: 0.15,
-            shadowOffset: { width: 0, height: -2 },
-            shadowRadius: 6,
+            flexDirection: 'row',
+            gap: 12,
           }}
         >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
-            }}
-          >
             <TouchableOpacity
               style={{
                 flex: 1,
-                backgroundColor: "#E3E3E3",
+                backgroundColor: "#fff",
                 paddingVertical: 14,
                 borderRadius: 10,
                 alignItems: "center",
+                borderWidth: 1,
+                borderColor: "#ccc",
               }}
               onPress={resetFilters}
             >
-              <Text style={{ color: "#333", fontWeight: "600", fontSize: 15 }}>Reset</Text>
+              <Text style={{ color: "#555", fontWeight: "600", fontSize: 15 }}>
+                Clear Filters
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -183,33 +151,29 @@ export default function FilterModal({
                 Apply Filters
               </Text>
             </TouchableOpacity>
-          </View>
         </View>
       </View>
     </Modal>
   );
 }
 
-// 🔸 Helper to render filter sections
 function renderSection(title, items, filters, toggleFilter) {
   const key = title.toLowerCase().replace(/\s/g, "");
   return (
-    <View style={{ marginBottom: 22 }}>
-      <Text style={{ fontSize: 14, fontWeight: "600", color: "#2E2E2E", marginBottom: 10 }}>
-        {title}
-      </Text>
+    <View style={{ marginBottom: 22, borderBottomWidth: 1, borderBottomColor: '#E0E0E0', paddingBottom: 15 }}>
+      <Text style={{ fontSize: 16, color: "#444", marginBottom: 10 }}>{title}</Text>
       {items.map((item) => (
         <TouchableOpacity
           key={item}
-          style={{ flexDirection: "row", alignItems: "center", marginBottom: 8, paddingLeft: 6 }}
+          style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}
           onPress={() => toggleFilter(key, item)}
         >
           <Ionicons
-            name={filters[key]?.includes(item) ? "checkbox-outline" : "square-outline"}
+            name={filters[key]?.includes(item) ? "checkbox" : "square-outline"} 
             size={20}
-            color="#2C6E49"
+            color={filters[key]?.includes(item) ? "#666" : "#888"} 
           />
-          <Text style={{ marginLeft: 10, fontSize: 14, color: "#333" }}>{item}</Text>
+          <Text style={{ marginLeft: 10, fontSize: 14, color: "#444" }}>{item}</Text>
         </TouchableOpacity>
       ))}
     </View>
