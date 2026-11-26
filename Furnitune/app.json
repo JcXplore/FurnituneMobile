@@ -7,9 +7,20 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "owner": "furnitune",
-    "platforms": ["ios", "android", "web"],
-    "assetBundlePatterns": ["**/*", "assets/files/*.txt"],
-    "plugins": ["expo-web-browser", "expo-asset"],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*",
+      "assets/files/*.txt"
+    ],
+    "plugins": [
+      "expo-web-browser",
+      "expo-asset",
+      "expo-router"
+    ],
     "extra": {
       "eas": {
         "projectId": "6c975ddb-734f-4a18-a26e-b4a1b5757fe7"

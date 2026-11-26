@@ -23,7 +23,7 @@ export default function ProductPage({ navigation, route }) {
   const [filterVisible, setFilterVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   
-  // ✅ 1. New State for Error/Offline Status
+  // New State for Error/Offline Status
   const [error, setError] = useState(null);
 
   // Sidebar filters
@@ -67,23 +67,39 @@ export default function ProductPage({ navigation, route }) {
   
   const loadProducts = async (isRefreshing = false) => {
     if (!isRefreshing) setLoading(true);
-    
-    // ✅ 2. Reset error before trying to fetch
     setError(null); 
 
     const storage = getStorage();
     let rawDataList = [];
 
     try {
-      // 1. CHECK: Did MenuBar send specific SEARCH RESULTS?
+      // ✅ 1. FETCH PRICE DELTAS FROM `sizePriceRules`
+      const rulesRef = collection(db, "sizePriceRules");
+      const rulesSnap = await getDocs(rulesRef);
+      const typeDeltas = {};
+
+      rulesSnap.forEach((doc) => {
+        const data = doc.data();
+        if (data.type && data.mode === "delta") {
+          const val = Number(data.value) || 0;
+          
+          if (!typeDeltas[data.type]) {
+            // Default assumes the base price is 0 delta
+            typeDeltas[data.type] = { min: 0, max: 0 }; 
+          }
+          
+          if (val > typeDeltas[data.type].max) typeDeltas[data.type].max = val;
+          if (val < typeDeltas[data.type].min) typeDeltas[data.type].min = val;
+        }
+      });
+
+      // 2. CHECK: Did MenuBar send specific SEARCH RESULTS?
       if (route.params && route.params.searchResults) {
-        console.log("Loading Search Results...");
         rawDataList = route.params.searchResults;
         if (!isRefreshing) setSelectedCategory("All"); 
       } 
-      // 2. CHECK: Did Landing Page send a Category? (e.g. "Chairs")
+      // 3. CHECK: Did Landing Page send a Category? (e.g. "Chairs")
       else if (route.params && route.params.product) {
-          console.log("Loading Category:", route.params.product);
           if (!isRefreshing) setSelectedCategory(route.params.product);
           
           const productsRef = collection(db, "products");
@@ -91,7 +107,7 @@ export default function ProductPage({ navigation, route }) {
           const querySnapshot = await getDocs(q);
           rawDataList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       }
-      // 3. DEFAULT: Just load everything
+      // 4. DEFAULT: Just load everything
       else {
         const productsRef = collection(db, "products");
         const q = query(productsRef);
@@ -99,7 +115,7 @@ export default function ProductPage({ navigation, route }) {
         rawDataList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       }
 
-      // 4. RESOLVE IMAGES
+      // 5. RESOLVE IMAGES & APPLY PRICE RANGES
       const processedList = await Promise.all(
         rawDataList.map(async (data) => {
           let imageUrl = null;
@@ -117,14 +133,21 @@ export default function ProductPage({ navigation, route }) {
             console.warn(`Image error:`, err);
           }
 
+          // Calculate min and max price based on the rules found
+          const baseType = data.baseType || "Uncategorized";
+          const basePrice = Number(data.basePrice) || 0;
+          const deltas = typeDeltas[baseType] || { min: 0, max: 0 };
+
           return {
             id: data.id,
             name: data.name,
-            price: data.basePrice ?? 0,
+            price: basePrice, // Kept as base for the sidebar filters
+            minPrice: basePrice + deltas.min, // NEW
+            maxPrice: basePrice + deltas.max, // NEW
             image: imageUrl,
             rating: data.ratingAvg ?? 0,
             reviews: data.reviewsCount ?? 0,
-            category: data.baseType || "Uncategorized",
+            category: baseType,
             tags: data.tags || [],
           };
         })
@@ -133,19 +156,16 @@ export default function ProductPage({ navigation, route }) {
       setProducts(processedList);
     } catch (err) {
       console.error("Error loading products:", err);
-      // ✅ 3. Set Error State on Failure
       setError("No Internet Connection");
     } finally {
       if (!isRefreshing) setLoading(false);
     }
   };
 
-  // ✅ Initial Load
   useEffect(() => {
     loadProducts(false);
   }, [route.params]);
 
-  // ✅ Refresh Function
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadProducts(true);
@@ -192,31 +212,39 @@ export default function ProductPage({ navigation, route }) {
     return true;
   });
 
-  const renderProduct = ({ item }) => (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => navigation.navigate("ProductDetails", { product: item })}
-    >
-      {item.image ? (
-        <Image
-          source={item.image}
-          style={styles.image}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          transition={300}
-        />
-      ) : (
-        <View style={[styles.image, styles.noImage]}>
-          <Text>No Image</Text>
-        </View>
-      )}
-      <Text style={styles.name}>{item.name}</Text>
-      <Text style={styles.price}>₱{Number(item.price).toFixed(2)}</Text>
-      <Text style={styles.rating}>
-        ⭐ {item.rating} ({item.reviews} Reviews)
-      </Text>
-    </TouchableOpacity>
-  );
+  const renderProduct = ({ item }) => {
+    // Determine if we should show a range or a single price
+    const displayPrice = 
+      item.minPrice !== item.maxPrice 
+        ? `₱${Number(item.minPrice).toLocaleString()} - ₱${Number(item.maxPrice).toLocaleString()}`
+        : `₱${Number(item.minPrice).toLocaleString()}`;
+
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => navigation.navigate("ProductDetails", { product: item })}
+      >
+        {item.image ? (
+          <Image
+            source={item.image}
+            style={styles.image}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={300}
+          />
+        ) : (
+          <View style={[styles.image, styles.noImage]}>
+            <Text>No Image</Text>
+          </View>
+        )}
+        <Text style={styles.name}>{item.name}</Text>
+        <Text style={styles.price}>{displayPrice}</Text>
+        <Text style={styles.rating}>
+          ⭐ {item.rating} ({item.reviews} Reviews)
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   const CategoryBar = (
     <View style={styles.categoryContainer}>
@@ -248,7 +276,7 @@ export default function ProductPage({ navigation, route }) {
     </View>
   );
 
-  // ✅ 4. RENDER ERROR SCREEN
+  // RENDER ERROR SCREEN
   if (error && !loading && products.length === 0) {
     return (
       <View style={styles.container}>
@@ -461,8 +489,6 @@ const styles = StyleSheet.create({
     marginLeft: -12,
     marginTop: -12,
   },
-  
-  // ✅ 5. Error Styles
   errorContainer: {
     flex: 1,
     justifyContent: "center",

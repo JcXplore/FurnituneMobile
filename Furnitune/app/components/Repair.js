@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react"; 
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { getAuth } from "firebase/auth";
 
 export default function Repair({ navigation }) {
   const [selectedType, setSelectedType] = useState(null);
+  const [selectedSize, setSelectedSize] = useState(null); 
   const [selectedCover, setSelectedCover] = useState(null);
   const [selectedFrame, setSelectedFrame] = useState(null);
   const [uploadedImages, setUploadedImages] = useState([]);
@@ -24,23 +25,77 @@ export default function Repair({ navigation }) {
   const [uploading, setUploading] = useState(false);
   const [totalCost, setTotalCost] = useState(0);
 
-React.useEffect(() => {
-  const total =
-    (selectedType?.basePrice || 0) +
-    (selectedCover?.value || 0) +
-    (selectedFrame?.value || 0);
-
-  setTotalCost(total * qty);
-}, [selectedType, selectedCover, selectedFrame, qty]);
-
-  const types = [
-  { label: "Bed", basePrice: 3200 },
-  { label: "Chair", basePrice: 1200 },
-  { label: "Dining Table", basePrice: 2800 },
-  { label: "Ottoman", basePrice: 1400 },
-  { label: "Sectionals", basePrice: 3600 },
-  { label: "Sofa", basePrice: 3000 },
-];
+  const repairOptions = [
+    {
+      id: "bed",
+      label: "Bed",
+      price: 3200,
+      sizes: [
+        { id: "single", label: "Single", priceAdd: 0 },
+        { id: "double", label: "Double", priceAdd: 500 },
+        { id: "queen", label: "Queen", priceAdd: 1000 },
+        { id: "king", label: "King", priceAdd: 1500 },
+        { id: "custom", label: "Custom", priceAdd: 2000 },
+      ],
+    },
+    {
+      id: "chair",
+      label: "Chair",
+      price: 1200,
+      sizes: [
+        { id: "standard", label: "Standard", priceAdd: 0 },
+        { id: "counter", label: "Counter", priceAdd: 300 },
+        { id: "bar", label: "Bar", priceAdd: 500 },
+        { id: "custom", label: "Custom", priceAdd: 800 },
+      ],
+    },
+    {
+      id: "dining_table",
+      label: "Dining Table",
+      price: 2800,
+      sizes: [
+        { id: "2_people", label: "2 people", priceAdd: 0 },
+        { id: "4_people", label: "4 people", priceAdd: 600 },
+        { id: "6_people", label: "6 people", priceAdd: 1200 },
+        { id: "8_people", label: "8 people", priceAdd: 1800 },
+        { id: "custom", label: "Custom", priceAdd: 2500 },
+      ],
+    },
+    { 
+      id: "ottoman", 
+      label: "Ottoman", 
+      price: 1400, 
+      sizes: [
+        { id: "std_cube", label: "Standard Cube", priceAdd: 200 },
+        { id: "footstool", label: "Footstool", priceAdd: 100 },
+        { id: "cocktail", label: "Cocktail", priceAdd: 500 },
+        { id: "custom", label: "Custom", priceAdd: 600 },
+      ] 
+    },
+    { 
+      id: "sectionals", 
+      label: "Sectionals", 
+      price: 3600, 
+      sizes: [
+        { id: "3_seater", label: "3 Seater", priceAdd: 0 },
+        { id: "5_seater", label: "5 Seater", priceAdd: 1500 },
+        { id: "6_seater", label: "6 Seater", priceAdd: 2200 },
+        { id: "7_seater", label: "7 Seater", priceAdd: 2900 },
+        { id: "custom", label: "Custom", priceAdd: 3500 },
+      ] 
+    },
+    { 
+      id: "sofa", 
+      label: "Sofa", 
+      price: 3000, 
+      sizes: [
+        { id: "2_seater", label: "2 Seater", priceAdd: 0 },
+        { id: "3_seater", label: "3 Seater", priceAdd: 800 },
+        { id: "4_seater", label: "4 Seater", priceAdd: 1500 },
+        { id: "custom", label: "Custom", priceAdd: 2000 },
+      ] 
+    },
+  ];
 
   const covers = [
     { label: "Fabric", value: 800 },
@@ -54,97 +109,101 @@ React.useEffect(() => {
     { label: "None", value: 0 },
   ];
 
-  const calculateTotal = () => {
-    if (!selectedType) return 0;
-    let total =
-      (selectedType?.basePrice || 0) +
+  useEffect(() => {
+    let basePrice = selectedType?.price || 0;
+    
+    let sizeAdd = 0;
+    if (selectedType && selectedType.sizes && selectedSize) {
+        const foundSize = selectedType.sizes.find(s => s.label === selectedSize.label);
+        if (foundSize) {
+            sizeAdd = foundSize.priceAdd;
+        }
+    }
+
+    const total =
+      basePrice +
+      sizeAdd +
       (selectedCover?.value || 0) +
       (selectedFrame?.value || 0);
-    return total * qty;
-  };
 
-  const updateTotal = () => setTotalCost(calculateTotal());
+    setTotalCost(total * qty);
+  }, [selectedType, selectedSize, selectedCover, selectedFrame, qty]);
 
-  const handleSelect = (setter, value) => {
-  setter(value);
-};
+  const handleSelectImages = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsMultipleSelection: true,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        selectionLimit: 3, 
+      });
 
-const handleSelectImages = async () => {
-  try {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsMultipleSelection: true,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-      selectionLimit: 3, // limit to 3 images
-    });
-
-    if (!result.canceled) {
-      // Handle both single and multiple selection
-      const selected = result.assets.map((asset) => asset.uri);
-      setUploadedImages(selected);
+      if (!result.canceled) {
+        const selected = result.assets.map((asset) => asset.uri);
+        setUploadedImages(selected);
+      }
+    } catch (error) {
+      console.error("Error selecting images:", error);
+      Alert.alert("Error", "Failed to select images. Please try again.");
     }
-  } catch (error) {
-    console.error("Error selecting images:", error);
-    Alert.alert("Error", "Failed to select images. Please try again.");
-  }
-};
-
+  };
 
   const handlePlaceRepair = async () => {
-  const auth = getAuth();
-  const user = auth.currentUser;
+    const auth = getAuth();
+    const user = auth.currentUser;
 
-  if (!user) {
-    Alert.alert("Error", "You must be logged in to request a repair.");
-    return;
-  }
+    if (!user) {
+      Alert.alert("Error", "You must be logged in to request a repair.");
+      return;
+    }
 
-  if (uploadedImages.length === 0) {
-    Alert.alert("Missing Photos", "Please upload at least one photo of the damaged furniture.");
-    return;
-  }
+    if (uploadedImages.length === 0) {
+      Alert.alert("Missing Photos", "Please upload at least one photo of the damaged furniture.");
+      return;
+    }
 
-  if (!selectedType || !selectedCover || !selectedFrame) {
-    Alert.alert("Missing Info", "Please complete all repair selections.");
-    return;
-  }
+    if (!selectedType || !selectedCover || !selectedFrame) {
+      Alert.alert("Missing Info", "Please complete all repair selections.");
+      return;
+    }
 
-   // ✅ Build consistent product object like customization
-  const repairProduct = {
-    id: "repair_" + Date.now(),
-    name: `Repair - ${selectedType.label}`,
-    type: "repair",
-    category: "Repair",
-    imageUrls: uploadedImages.length > 0 ? uploadedImages : [
-      "https://via.placeholder.com/150",
-    ],
-    uploadedImages,
-    price: totalCost,
-    qty,
-    notes,
-    typeLabel: selectedType?.label || "Unknown",
-    coverMaterialLabel: selectedCover?.label || "None",
-    frameMaterialLabel: selectedFrame?.label || "None",
-    coverMaterialPrice: selectedCover?.value || 0,
-    frameMaterialPrice: selectedFrame?.value || 0,
-    total: totalCost,
-    status: "processing",
-    userId: user?.uid,
-    contactEmail: user?.email,
-    createdAt: new Date().toISOString(),
+    const repairProduct = {
+      id: "repair_" + Date.now(),
+      name: `Repair - ${selectedType.label}${selectedSize ? ` (${selectedSize.label})` : ''}`,
+      type: "repair",
+      category: "Repair",
+      imageUrls: uploadedImages.length > 0 ? uploadedImages : [
+        "https://via.placeholder.com/150",
+      ],
+      uploadedImages,
+      price: totalCost,
+      qty,
+      notes,
+      // 🔹 NEW DATA FIELDS ADDED FOR CHECKOUT
+      selectedColor: selectedCover?.label || "None", 
+      selectedMaterial: selectedFrame?.label || "None",
+      typeLabel: selectedType?.label || "Unknown",
+      sizeLabel: selectedSize?.label || "N/A", 
+      coverMaterialLabel: selectedCover?.label || "None",
+      frameMaterialLabel: selectedFrame?.label || "None",
+      coverMaterialPrice: selectedCover?.value || 0,
+      frameMaterialPrice: selectedFrame?.value || 0,
+      total: totalCost,
+      status: "processing",
+      userId: user?.uid,
+      contactEmail: user?.email,
+      createdAt: new Date().toISOString(),
+    };
+
+    navigation.navigate("CheckoutPage", {
+      product: { ...repairProduct, isRepair: true },
+    });
   };
 
-  // ✅ Pass it like customization
-  navigation.navigate("CheckoutPage", {
-  product: { ...repairProduct, isRepair: true },
-});
-};
-
-const handleQtyChange = (newQty) => {
-  if (newQty < 1) return;
-  setQty(newQty);
-};
-
+  const handleQtyChange = (newQty) => {
+    if (newQty < 1) return;
+    setQty(newQty);
+  };
 
   return (
     <View style={styles.pageContainer}>
@@ -154,93 +213,120 @@ const handleQtyChange = (newQty) => {
       >
         <Text style={styles.header}>REPAIR YOUR FURNITURE</Text>
 
-        {/* IMAGE UPLOAD */}
         <View style={styles.imageBox}>
-  <Text style={styles.imageSectionTitle}>UPLOAD DAMAGE PHOTOS</Text>
+          <Text style={styles.imageSectionTitle}>UPLOAD DAMAGE PHOTOS</Text>
 
-  <View style={styles.imageGrid}>
-    {uploadedImages.length > 0 ? (
-      uploadedImages.map((img, index) => (
-        <View key={index} style={styles.imageCard}>
-          <Image source={{ uri: img }} style={styles.imageThumb} />
+          <View style={styles.imageGrid}>
+            {uploadedImages.length > 0 ? (
+              uploadedImages.map((img, index) => (
+                <View key={index} style={styles.imageCard}>
+                  <Image source={{ uri: img }} style={styles.imageThumb} />
+                  <TouchableOpacity
+                    style={styles.removeBtn}
+                    onPress={() =>
+                      setUploadedImages((prev) => prev.filter((_, i) => i !== index))
+                    }
+                  >
+                    <Ionicons name="close-circle" size={22} color="#B22222" />
+                  </TouchableOpacity>
+                </View>
+              ))
+            ) : (
+              <Image
+                source={require("../assets/chairs.png")} 
+                style={styles.placeholderImage}
+              />
+            )}
+          </View>
+
           <TouchableOpacity
-            style={styles.removeBtn}
-            onPress={() =>
-              setUploadedImages((prev) => prev.filter((_, i) => i !== index))
-            }
+            style={[
+              styles.uploadBtn,
+              uploadedImages.length >= 3 || uploading ? { backgroundColor: "#ccc" } : {},
+            ]}
+            onPress={handleSelectImages}
+            disabled={uploadedImages.length >= 3 || uploading}
           >
-            <Ionicons name="close-circle" size={22} color="#B22222" />
+            {uploading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+                <Text style={styles.uploadText}>
+                  {uploadedImages.length >= 3
+                    ? "Image Limit Reached (3/3)"
+                    : uploadedImages.length > 0
+                      ? `Add More (${uploadedImages.length}/3)`
+                      : "Upload Damage Photos"}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
-      ))
-    ) : (
-      <Image
-        source={require("../assets/chairs.png")}
-        style={styles.placeholderImage}
-      />
-    )}
-  </View>
 
-  <TouchableOpacity
-  style={[
-    styles.uploadBtn,
-    uploadedImages.length >= 3 || uploading ? { backgroundColor: "#ccc" } : {},
-  ]}
-  onPress={handleSelectImages}
-  disabled={uploadedImages.length >= 3 || uploading}
->
-  {uploading ? (
-    <ActivityIndicator size="small" color="#fff" />
-  ) : (
-    <>
-      <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
-      <Text style={styles.uploadText}>
-        {uploadedImages.length >= 3
-          ? "Image Limit Reached (3/3)"
-          : uploadedImages.length > 0
-          ? `Add More (${uploadedImages.length}/3)`
-          : "Upload Damage Photos"}
-      </Text>
-    </>
-  )}
-</TouchableOpacity>
-
-</View>
-
-
-
-        {/* TYPE SELECTION */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>1. CHOOSE TYPE</Text>
           <View style={styles.optionRow}>
-            {types.map((item) => (
+            {repairOptions.map((item) => (
               <TouchableOpacity
-                key={item.label}
+                key={item.id} 
                 style={[
                   styles.optionBtn,
-                  selectedType?.label === item.label && styles.optionSelected,
+                  selectedType?.id === item.id && styles.optionSelected,
                 ]}
-                onPress={() => handleSelect(setSelectedType, item)}
+                onPress={() => {
+                    setSelectedType(item);
+                    setSelectedSize(null); 
+                }}
               >
                 <Text
                   style={[
                     styles.optionText,
-                    selectedType?.label === item.label && styles.optionTextSelected,
+                    selectedType?.id === item.id && styles.optionTextSelected,
                   ]}
                 >
                   {item.label}
                 </Text>
                 <Text style={styles.priceText}>
-                  ₱{item.basePrice.toLocaleString()}
+                  ₱{item.price.toLocaleString()}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
 
-        {/* COVER SELECTION */}
+        {selectedType && selectedType.sizes && selectedType.sizes.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>2. CHOOSE SIZE</Text>
+            <View style={styles.optionRow}>
+              {selectedType.sizes.map((sizeItem) => (
+                <TouchableOpacity
+                  key={sizeItem.id}
+                  style={[
+                    styles.optionBtn,
+                    selectedSize?.id === sizeItem.id && styles.optionSelected,
+                  ]}
+                  onPress={() => setSelectedSize(sizeItem)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      selectedSize?.id === sizeItem.id && styles.optionTextSelected,
+                    ]}
+                  >
+                    {sizeItem.label}
+                  </Text>
+                  <Text style={styles.priceText}>
+                    +₱{sizeItem.priceAdd.toLocaleString()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>2. CHOOSE COVER</Text>
+          <Text style={[styles.sectionTitle]}>{selectedType && selectedType.sizes && selectedType.sizes.length > 0 ? "3." : "2."} CHOOSE COVER</Text>
           <View style={styles.optionRow}>
             {covers.map((item) => (
               <TouchableOpacity
@@ -249,7 +335,7 @@ const handleQtyChange = (newQty) => {
                   styles.optionBtn,
                   selectedCover?.label === item.label && styles.optionSelected,
                 ]}
-                onPress={() => handleSelect(setSelectedCover, item)}
+                onPress={() => setSelectedCover(item)}
               >
                 <Text
                   style={[
@@ -267,9 +353,8 @@ const handleQtyChange = (newQty) => {
           </View>
         </View>
 
-        {/* FRAME SELECTION */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>3. CHOOSE FRAME</Text>
+          <Text style={styles.sectionTitle}>{selectedType && selectedType.sizes && selectedType.sizes.length > 0 ? "4." : "3."} CHOOSE FRAME</Text>
           <View style={styles.optionRow}>
             {frames.map((item) => (
               <TouchableOpacity
@@ -278,7 +363,7 @@ const handleQtyChange = (newQty) => {
                   styles.optionBtn,
                   selectedFrame?.label === item.label && styles.optionSelected,
                 ]}
-                onPress={() => handleSelect(setSelectedFrame, item)}
+                onPress={() => setSelectedFrame(item)}
               >
                 <Text
                   style={[
@@ -296,9 +381,8 @@ const handleQtyChange = (newQty) => {
           </View>
         </View>
 
-        {/* NOTES */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>4. ADD NOTES</Text>
+          <Text style={styles.sectionTitle}>{selectedType && selectedType.sizes && selectedType.sizes.length > 0 ? "5." : "4."} ADD NOTES</Text>
           <TextInput
             style={styles.textBox}
             placeholder="Describe what needs repair..."
@@ -310,7 +394,6 @@ const handleQtyChange = (newQty) => {
         </View>
       </ScrollView>
 
-      {/* STICKY TOTAL BAR */}
       <View style={styles.stickyBar}>
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>ESTIMATED TOTAL</Text>
@@ -358,7 +441,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  mainImage: { width: "100%", height: 200, borderRadius: 10, marginBottom: 10 },
   uploadBtn: {
     flexDirection: "row",
     backgroundColor: "#47695B",
@@ -444,74 +526,54 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   buyNowText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  imagePreviewContainer: {
-  marginRight: 10,
-  position: "relative",
-},
-previewImage: {
-  width: 100,
-  height: 100,
-  borderRadius: 10,
-},
-removeBtn: {
-  position: "absolute",
-  top: -5,
-  right: -5,
-  backgroundColor: "#fff",
-  borderRadius: 50,
-  elevation: 2,
-},
-imageSectionTitle: {
-  fontWeight: "700",
-  color: "#1B3D36",
-  fontSize: 15,
-  marginBottom: 10,
-  alignSelf: "flex-start",
-},
+  removeBtn: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    backgroundColor: "#fff",
+    borderRadius: 50,
+    padding: 2,
+    elevation: 3,
+  },
+  imageSectionTitle: {
+    fontWeight: "700",
+    color: "#1B3D36",
+    fontSize: 15,
+    marginBottom: 10,
+    alignSelf: "flex-start",
+  },
 
-imageGrid: {
-  flexDirection: "row",
-  flexWrap: "wrap",
-  justifyContent: "flex-start",
-  gap: 10,
-  marginBottom: 12,
-  width: "100%",
-},
+  imageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-start",
+    gap: 10,
+    marginBottom: 12,
+    width: "100%",
+  },
 
-imageCard: {
-  width: "30%",
-  aspectRatio: 1,
-  borderRadius: 10,
-  overflow: "hidden",
-  backgroundColor: "#f4f4f4",
-  position: "relative",
-  elevation: 2,
-},
+  imageCard: {
+    width: "30%",
+    aspectRatio: 1,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: "#f4f4f4",
+    position: "relative",
+    elevation: 2,
+  },
 
-imageThumb: {
-  width: "100%",
-  height: "100%",
-  resizeMode: "cover",
-  borderRadius: 10,
-},
+  imageThumb: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+    borderRadius: 10,
+  },
 
-placeholderImage: {
-  width: "100%",
-  height: 200,
-  borderRadius: 10,
-  resizeMode: "contain",
-  marginBottom: 10,
-},
-
-removeBtn: {
-  position: "absolute",
-  top: 4,
-  right: 4,
-  backgroundColor: "#fff",
-  borderRadius: 50,
-  padding: 2,
-  elevation: 3,
-},
-
-
+  placeholderImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 10,
+    resizeMode: "contain",
+    marginBottom: 10,
+  },
 });

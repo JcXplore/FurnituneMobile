@@ -16,21 +16,18 @@ import {
   collection,
   addDoc,
   serverTimestamp,
-  doc,         // ✅ add this
-  setDoc,      // ✅ add this
+  doc,         
+  setDoc,      
 } from "firebase/firestore";
 import {
   getStorage,
   ref,
   uploadBytes,
   getDownloadURL,
-  updateDoc,
-  arrayUnion,
 } from "firebase/storage";
 import { getAuth } from "firebase/auth";
 import { app } from "./firebaseConfig";
-import * as Linking from "expo-linking"; // ← add this import at the top
-
+import * as Linking from "expo-linking"; 
 
 const db = getFirestore(app);
 const auth = getAuth(app);
@@ -40,6 +37,17 @@ export default function PaymentPage({ route, navigation }) {
   const { order } = route.params || {};
   const [uploading, setUploading] = useState(false);
   const [image, setImage] = useState(null);
+
+  const getBlobFromUri = async (uri) => {
+    return await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = function () { resolve(xhr.response); };
+      xhr.onerror = function (e) { reject(new TypeError("Network request failed")); };
+      xhr.responseType = "blob";
+      xhr.open("GET", uri, true);
+      xhr.send(null);
+    });
+  };
 
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -75,142 +83,159 @@ export default function PaymentPage({ route, navigation }) {
   try {
     setUploading(true);
 
-    // 🔹 Upload payment proof
     const proofFilename = `userPayments/${user.uid}/${Date.now()}_proof.jpg`;
     const proofRef = ref(storage, proofFilename);
-    const proofBlob = await (await fetch(image)).blob();
+    const proofBlob = await getBlobFromUri(image);
     await uploadBytes(proofRef, proofBlob, { contentType: "image/jpeg" });
     const paymentProofUrl = await getDownloadURL(proofRef);
 
-    // 🔹 Detect order type
     const orderType =
       order?.items?.[0]?.type ||
       order?.type ||
       order?.product?.type ||
       "catalog";
 
-    let orderData = {};
     let collectionName = "orders";
+    if (orderType === "customization") collectionName = "custom_orders";
+    else if (orderType === "repair") collectionName = "repairs";
 
-    // 🎨 Handle CUSTOMIZATION orders
-    if (orderType === "customization") {
-    collectionName = "custom_orders";
+    const newOrderRef = doc(collection(db, collectionName));
+    const generatedId = newOrderRef.id;
+
+    let orderData = {};
     const item = order?.items?.[0] || order?.product || {};
 
+    const totalAmount = Number(order?.total || (item?.price || 0) + (order?.shippingFee || 510));
+    const totalCents = totalAmount * 100;
+    
+    // 🟢 NEW: Record the initial payment as the full Total Amount (Subtotal + Shipping)
+    const depositAmount = totalAmount; 
+    const depositCents = depositAmount * 100;
 
-    const uploadedDesigns = [];
+    if (orderType === "customization") {
+        
+        const uploadedDesigns = [];
 
-    const thumbnailUrl =
-      order?.product?.thumbnail ||
-      order?.product?.thumbnailUrl ||
-      (Array.isArray(order?.product?.imageUrls)
-        ? order.product.imageUrls.find((url) =>
-            url.toLowerCase().includes("thumb")
-          )
-        : null) ||
-      (Array.isArray(order?.product?.images)
-        ? order.product.images.find((url) =>
-            url.toLowerCase().includes("thumb")
-          )
-        : null) ||
-      order?.product?.image ||
-      order?.product?.images?.[0] ||
-      order?.product?.imageUrls?.[0] ||
-      "https://via.placeholder.com/150";
+        const imageList = [
+          ...(item.uploadedImages || []),
+          ...(order?.uploadedImages || []),
+          ...(order?.product?.uploadedImages || []),
+        ].filter((uri) => !!uri && typeof uri === 'string'); 
 
-    // ✅ Only upload user reference images, not the thumbnail
-    const imageList = [
-      ...(item.uploadedImages || []),
-      ...(order?.uploadedImages || []),
-      ...(order?.product?.uploadedImages || []),
-    ].filter((uri) => !!uri);
-
-    console.log("🖼️ Using thumbnail only for product image:", thumbnailUrl);
-    console.log("🖼️ Uploading only user images:", imageList);
-
-
-
-
-
-
-    for (const [index, uri] of imageList.entries()) {
-      try {
-        if (uri && uri.startsWith("file://")) {
-          const imgRef = ref(storage, `customOrders/${user.uid}/${Date.now()}_${index}_design.jpg`);
-          const blob = await (await fetch(uri)).blob();
-          await uploadBytes(imgRef, blob, { contentType: "image/jpeg" });
-          const downloadURL = await getDownloadURL(imgRef);
-          uploadedDesigns.push(downloadURL);
-        } else if (uri && uri.startsWith("https://")) {
-          uploadedDesigns.push(uri); // keep already uploaded URLs
+        for (const [index, uri] of imageList.entries()) {
+          try {
+            if (uri && uri.startsWith("file://")) {
+              const imgRef = ref(storage, `customOrders/${user.uid}/${Date.now()}_${index}_design.jpg`);
+              const response = await fetch(uri);
+              const blob = await getBlobFromUri(uri);
+              await uploadBytes(imgRef, blob, { contentType: "image/jpeg" });
+              const downloadURL = await getDownloadURL(imgRef);
+              uploadedDesigns.push(downloadURL);
+            } else if (uri && uri.startsWith("https://")) {
+              uploadedDesigns.push(uri); 
+            }
+          } catch (err) {
+            console.warn("⚠️ Error uploading reference image:", err.message);
+          }
         }
-      } catch (err) {
-        console.warn("⚠️ Error uploading reference image:", err.message);
-      }
-    }
 
-    // 🩹 Fallback: if user uploaded no new images, keep any existing ones
-    if (uploadedDesigns.length === 0) {
-      if (item.referenceImages?.length > 0) uploadedDesigns.push(...item.referenceImages);
-      else if (order?.product?.referenceImages?.length > 0)
-        uploadedDesigns.push(...order.product.referenceImages);
-    }
+        if (uploadedDesigns.length === 0) {
+          if (item.referenceImages?.length > 0) uploadedDesigns.push(...item.referenceImages);
+          else if (order?.product?.referenceImages?.length > 0)
+            uploadedDesigns.push(...order.product.referenceImages);
+        }
 
-    console.log("✅ Uploaded reference images:", uploadedDesigns);
+        // We receive the perfectly clean https:// URL generated by CheckoutPage.js
+       // Get the image passed down from the previous screens
+        let safeMainImage = item.image || item.imageUrl || "https://via.placeholder.com/150";
 
+        // 🚨 CRITICAL FIX: Intercept the local file:// path and upload it to Firebase!
+        if (safeMainImage.startsWith("file://")) {
+          try {
+            const mainImgRef = ref(storage, `customOrders/${user.uid}/${Date.now()}_main_concept.jpg`);
+            
+            // Use the XHR helper we added earlier to safely create the blob
+            const blob = await getBlobFromUri(safeMainImage);
+            await uploadBytes(mainImgRef, blob, { contentType: "image/jpeg" });
+            
+            // Overwrite the local path with the permanent Firebase HTTPS URL
+            safeMainImage = await getDownloadURL(mainImgRef);
+          } catch (err) {
+            console.warn("⚠️ Error uploading AI concept to storage:", err.message);
+            safeMainImage = "https://via.placeholder.com/150?text=Upload+Failed";
+          }
+        }
 
-    orderData = {
-      userId: user.uid,
-      orderId: generatedId,
-      category: item.category || "Custom",
-      productId: item.id || "custom_" + Date.now(),
-      productTitle: item.name || "Custom Product",
-      descriptionFromProduct: item.description || "",
+        // Deep clean the item so no buggy arrays survive
+        const cleanItem = { ...item };
+        delete cleanItem.uploadedImages;
+        delete cleanItem.imageUrls;
+        delete cleanItem.images;
+        delete cleanItem.originalImage;
+        
+        cleanItem.image = safeMainImage;
+        cleanItem.imageUrl = safeMainImage;
 
-      images: [
-        item.originalImage || item.image || order?.product?.image || product?.image
-      ],
-        referenceImages: uploadedDesigns,
-            // ✅ Custom details
-            notes: item.notes || "",
-            additionals: item.additionals || [],
-            cover: {
-              color: item.selectedColor || "Default",
-              materialType: item.selectedMaterial || "Fabric",
-            },
-            size: item.selectedSize || "Catalog",
-            status: "processing",
-            type: "customization",
+        orderData = {
+          userId: user.uid,
+          orderId: generatedId,
+          category: item.category || "Custom",
+          contactEmail: order?.contactEmail || user?.email || "",
+          
+          productId: item.id || item.productId || "custom_" + Date.now(),
+          productTitle: item.name || item.title || "Custom Product",
+          descriptionFromProduct: item.description || "",
+          notes: item.notes || order?.orderNotes || "",
+          
+          images: [safeMainImage], 
+          referenceImages: uploadedDesigns, 
+          
+          additionals: item.additionals || [],
+          cover: {
+            color: item.selectedColor || "Default",
+            materialType: item.selectedMaterial || item.selectedCover || "Fabric",
+          },
+          size: item.selectedSize || "Catalog",
+          
+          items: [cleanItem], 
 
-            // ✅ Include pricing breakdown
-            unitPrice: Number(item.price || order?.subtotal || 0),
-            priceBreakdown: {
-              basePHP: Number(item.price || order?.subtotal || 0),
-              additionsPHP: 0,
-              sizeAddPHP: 0,
-              totalPHP: Number(order?.total || item.price || 0),
-              currency: "PHP",
-              materialMult: 1,
-              sizeMult: 1,
-            },
+          unitPrice: Number(item.price || order?.subtotal || 0),
+          subtotal: Number(order?.subtotal || item.price || 0),
+          shippingFee: Number(order?.shippingFee || 510),
+          total: totalAmount,
+          
+          deposit: depositAmount,
+          depositCents: depositCents,
+          depositIntendedCents: totalCents,
+          
+          refundsCents: 0,
+          requestedAdditionalPaymentCents: 0,
 
-            // ✅ Include shipping address
-            shippingAddress: order?.shippingAddress || {},
+          status: "processing",
+          assessmentStatus: "pending",
 
-            // ✅ Payment status + proof
-            paymentStatus: "pending",
-            paymentProofUrl,
-            paymentUpdatedAt: serverTimestamp(),
+          shippingAddress: order?.shippingAddress || {},
 
-            // ✅ Timestamp
-            createdAt: serverTimestamp(),
-    };
-  } else if (orderType === "repair") {
-      collectionName = "repairs";
-      const item = order?.product || order || {};
+          paymentStatus: "pending", 
+          paymentProofPendingReview: true,
+          depositPaymentProofUrl: paymentProofUrl,
+          depositPaymentProofs: [
+            {
+              amountCents: null,
+              note: null,
+              uploadedAt: new Date().toISOString(), 
+              url: paymentProofUrl,
+            }
+          ],
+          
+          createdAt: serverTimestamp(),
+          paymentUpdatedAt: serverTimestamp(),
+          requestedAt: serverTimestamp(),
+        };
+
+    } else if (orderType === "repair") {
       const uploadedRepairImages = [];
 
-      // 🧩 Collect all possible image sources
       const repairImageList = [
         ...(item?.uploadedImages || []),
         ...(item?.images || []),
@@ -218,29 +243,15 @@ export default function PaymentPage({ route, navigation }) {
         ...(order?.items?.[0]?.uploadedImages || []),
       ].filter(Boolean);
 
-      console.log("🧰 Found repair images before upload:", repairImageList);
-
       for (const [index, uri] of repairImageList.entries()) {
         try {
           if (uri && uri.startsWith("file://")) {
-            console.log("⬆️ Uploading repair image:", uri);
-
-            // ✅ Ensure permission before accessing local files
-            const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!permission.granted) {
-              Alert.alert("Permission Required", "Please allow access to photos to upload repair images.");
-              continue;
-            }
-
             const response = await fetch(uri);
             const blob = await response.blob();
 
-            if (!blob || blob.size === 0) {
-              console.warn("⚠️ Empty blob for:", uri);
-              continue;
-            }
+            if (!blob || blob.size === 0) continue;
 
-            const repairId = order?.id || order?.repairId || Date.now().toString();
+            const repairId = generatedId;
               const imgRef = ref(
                 storage,
                 `repairs/${user.uid}/${repairId}/${Date.now()}_${index}_repair.jpg`
@@ -248,7 +259,6 @@ export default function PaymentPage({ route, navigation }) {
             await uploadBytes(imgRef, blob, { contentType: "image/jpeg" });
             const downloadURL = await getDownloadURL(imgRef);
             uploadedRepairImages.push(downloadURL);
-            console.log("✅ Uploaded to Firebase:", downloadURL);
           } else if (uri && uri.startsWith("https://")) {
             uploadedRepairImages.push(uri);
           }
@@ -257,85 +267,133 @@ export default function PaymentPage({ route, navigation }) {
         }
       }
 
-
       if (uploadedRepairImages.length === 0) {
-        console.warn("⚠️ No repair images uploaded, using placeholder.");
         uploadedRepairImages.push("https://via.placeholder.com/150");
       }
 
-      // ✅ Firestore data
+      const cleanItem = { ...item };
+      delete cleanItem.uploadedImages;
+      delete cleanItem.images;
+      cleanItem.image = uploadedRepairImages[0];
+      cleanItem.imageUrl = uploadedRepairImages[0];
+
       orderData = {
         userId: user?.uid || "",
         orderId: generatedId,
         contactEmail: order?.contactEmail || user?.email || "",
-        notes: item?.notes || "",
+        notes: item?.notes || order?.orderNotes || "",
         status: "processing",
         shippingAddress: order?.shippingAddress || {},
         typeId: item?.typeId || "repair_service",
         typeLabel: item?.typeLabel || "Repair Service",
+        
         typePrice: item?.typePrice || 0,
-        coverMaterialLabel: item?.coverMaterialLabel || "Fabric",
+        coverMaterialLabel: item?.coverMaterialLabel || item?.selectedColor || "Fabric",
         coverMaterialPrice: item?.coverMaterialPrice || 0,
-        frameMaterialLabel: item?.frameMaterialLabel || "Metal",
+        frameMaterialLabel: item?.frameMaterialLabel || item?.selectedMaterial || "Metal",
         frameMaterialPrice: item?.frameMaterialPrice || 0,
+        
         images: uploadedRepairImages,
         imagesCount: uploadedRepairImages.length,
-        total:
-          Number(order?.total || item?.total) ||
-          (item?.typePrice || 0) +
-            (item?.coverMaterialPrice || 0) +
-            (item?.frameMaterialPrice || 0),
+        items: [cleanItem],
+        
+        total: totalAmount,
+        deposit: depositAmount,
+        depositCents: depositCents,
+        depositIntendedCents: totalCents,
+        refundsCents: 0,
+        
         paymentStatus: "pending",
-        paymentProofUrl: paymentProofUrl || "",
-        paymentUpdatedAt: serverTimestamp(),
+        paymentProofPendingReview: true,
+        depositPaymentProofUrl: paymentProofUrl,
+        depositPaymentProofs: [
+            {
+              amountCents: null,
+              note: null,
+              uploadedAt: new Date().toISOString(), 
+              url: paymentProofUrl,
+            }
+        ],
+        
         createdAt: serverTimestamp(),
+        paymentUpdatedAt: serverTimestamp(),
       };
-    }else {
+    } else {
       orderData = {
         ...order,
         userId: user.uid,
         contactEmail: order.contactEmail || user.email,
-        paymentStatus: "pending",
-        paymentProofUrl,
-        paymentUpdatedAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
         status: "processing",
         type: "catalog",
+        
+        deposit: depositAmount,
+        depositCents: depositCents,
+        depositIntendedCents: totalCents,
+        refundsCents: 0,
+        
+        paymentStatus: "pending",
+        paymentProofPendingReview: true,
+        depositPaymentProofUrl: paymentProofUrl,
+        depositPaymentProofs: [
+            {
+              amountCents: null,
+              note: null,
+              uploadedAt: new Date().toISOString(), 
+              url: paymentProofUrl,
+            }
+        ],
+
+        createdAt: serverTimestamp(),
+        paymentUpdatedAt: serverTimestamp(),
       };
     }
-    Object.keys(orderData).forEach(
-      (key) => orderData[key] === undefined && delete orderData[key]
-    );
-
-    // 💾 Save to Firestore
-    const newOrderRef = doc(collection(db, collectionName));
-    const generatedId = newOrderRef.id;
-
-    // ✅ Attach this as orderId
-    orderData.orderId = generatedId;
-
-    // ✅ Save order using the same doc ID
-    await setDoc(newOrderRef, orderData);
     
-
-      // ✅ Add referenceImages to Firestore document after saving
-      if (orderType === "customization") {
-        try {
-          await updateDoc(newOrderRef, {
-            referenceImages: arrayUnion(...uploadedDesigns)
-          });
-          console.log("✅ referenceImages field updated in Firestore");
-        } catch (err) {
-          console.warn("⚠️ Failed to update referenceImages:", err);
+    const deepFlatten = (arr) => {
+      let result = [];
+      for (let val of arr) {
+        if (Array.isArray(val)) {
+          result.push(...deepFlatten(val));
+        } else {
+          result.push(val);
         }
       }
+      return result;
+    };
+
+    const sanitizeForFirestore = (data) => {
+      if (typeof data === 'string' && data.length > 50000) {
+          return "https://via.placeholder.com/150?text=Image+Too+Large";
+      }
+
+      if (Array.isArray(data)) {
+        return deepFlatten(data).filter(v => v !== undefined).map(sanitizeForFirestore);
+      }
+      if (data !== null && typeof data === 'object') {
+        if (typeof data.isEqual === 'function' || data._methodName || data.constructor.name === 'FieldValue' || data.constructor.name === 'Timestamp' || data instanceof Date) {
+          return data; 
+        }
+        const sanitized = {};
+        for (const [key, value] of Object.entries(data)) {
+          if (value !== undefined) {
+            sanitized[key] = sanitizeForFirestore(value);
+          }
+        }
+        return sanitized;
+      }
+      return data;
+    };
+
+    const finalSafeOrderData = sanitizeForFirestore(orderData);
+    finalSafeOrderData.orderId = generatedId;
+
+    await setDoc(newOrderRef, finalSafeOrderData);
 
     const userNotifRef = collection(db, "users", user.uid, "notifications");
       await addDoc(userNotifRef, {
-        userId: user.uid, // required ✅
+        userId: user.uid, 
         title: "Order Placed Successfully 🎉",
-        body: "Please pay ₱" + Number(order?.total || 0).toLocaleString() + " for your order.",
-        image: null, // optional, keep null if no image
+        body: "Your order and payment proof have been received and are pending review.",
+        image: null, 
         link: `/ordersummary?orderId=${newOrderRef.id}`,
         type: "order_status",
         createdAt: serverTimestamp(),
@@ -343,14 +401,12 @@ export default function PaymentPage({ route, navigation }) {
         readAt: null,
         orderId: newOrderRef.id,
         repairId: null,
-        status: "awaiting_payment",
+        status: "processing",
       });
-
-    console.log(`✅ ${orderType.toUpperCase()} order saved:`, newOrderRef.id);
 
     Alert.alert(
       "Payment Submitted",
-      "Your payment proof and design photos have been uploaded successfully.",
+      "Your payment proof and order details have been uploaded successfully. Please wait for our team to verify it.",
       [
         {
           text: "OK",
@@ -371,6 +427,8 @@ export default function PaymentPage({ route, navigation }) {
   }
 };
 
+  const calculatedTotal = Number(order?.total || (order?.product?.price || 0) + (order?.shippingFee || 510));
+
   return (
     <View style={{ flex: 1 }}>
     <ScrollView
@@ -385,7 +443,6 @@ export default function PaymentPage({ route, navigation }) {
           <Image
             source={{
               uri:
-                // 🛠 REPAIR ORDERS
                 order?.type === "repair" || order?.items?.[0]?.type === "repair"
                   ? order?.product?.uploadedImages?.[0] ||
                     order?.product?.imageUrl ||
@@ -393,19 +450,19 @@ export default function PaymentPage({ route, navigation }) {
                     order?.items?.[0]?.imageUrl ||
                     "https://via.placeholder.com/150"
 
-                // 🎨 CUSTOMIZATION ORDERS
-                    : order?.type === "customization" || order?.items?.[0]?.type === "customization"
-                    ? order?.product?.imageUrls?.[0] ||
-                      order?.product?.cover ||
-                      order?.product?.imageUrl ||
-                      order?.product?.thumbnail ||
-                      order?.product?.thumbnailUrl ||
-                      order?.items?.[0]?.uploadedImages?.[0] ||
-                      order?.items?.[0]?.imageUrls?.[0] ||
-                      "https://via.placeholder.com/150"
+                  : order?.type === "customization" || order?.items?.[0]?.type === "customization"
+                  ? order?.product?.imageUrls?.[0] ||
+                    order?.product?.image ||                   // 🚨 FIX: Look for product.image
+                    order?.items?.[0]?.image ||                // 🚨 FIX: Look for items[0].image
+                    order?.product?.cover ||
+                    order?.product?.imageUrl ||
+                    order?.product?.thumbnail ||
+                    order?.product?.thumbnailUrl ||
+                    order?.items?.[0]?.uploadedImages?.[0] ||
+                    order?.items?.[0]?.imageUrls?.[0] ||
+                    "https://via.placeholder.com/150"
 
-                  // 🛋 STANDARD PRODUCT ORDERS
-                  : order?.product?.imageUrl || // ✅ added for standard orders
+                  : order?.product?.imageUrl || 
                     order?.product?.thumbnail ||
                     order?.product?.thumbnailUrl ||
                     order?.items?.[0]?.thumbnail ||
@@ -441,7 +498,6 @@ export default function PaymentPage({ route, navigation }) {
           </Text>
         </View>
 
-        {/* Subtotal / Discount / Shipping */}
         <View style={styles.divider} />
         <View style={styles.summaryRow}>
           <Text style={styles.label}>Subtotal</Text>
@@ -456,11 +512,10 @@ export default function PaymentPage({ route, navigation }) {
           <Text style={styles.value}>₱{Number(order?.shippingFee || 510).toLocaleString()}</Text>
         </View>
 
-        {/* TOTAL */}
         <View style={[styles.summaryRow, { marginTop: 6 }]}>
           <Text style={styles.totalLabel}>TOTAL</Text>
           <Text style={styles.totalValue}>
-            ₱{Number(order?.total || (order?.product?.price || 0) + (order?.shippingFee || 510)).toLocaleString()}
+            ₱{calculatedTotal.toLocaleString()}
           </Text>
         </View>
       </View>
@@ -471,14 +526,11 @@ export default function PaymentPage({ route, navigation }) {
 
         <View style={styles.summaryRow}>
           <Text style={styles.label}>Assessed Total</Text>
-          <Text style={styles.value}>₱{Number(order?.total || (order?.product?.price || 0) + (order?.shippingFee || 510)).toLocaleString()}</Text>
+          <Text style={styles.value}>₱{calculatedTotal.toLocaleString()}</Text>
         </View>
+        
         <View style={styles.summaryRow}>
-          <Text style={styles.label}>Deposit</Text>
-          <Text style={styles.value}>+₱{Number(0).toLocaleString()}</Text>
-        </View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.label}>Additional Payments</Text>
+          <Text style={styles.label}>Verified Payments</Text>
           <Text style={styles.value}>+₱0</Text>
         </View>
         <View style={styles.summaryRow}>
@@ -490,16 +542,14 @@ export default function PaymentPage({ route, navigation }) {
 
         <View style={styles.summaryRow}>
           <Text style={styles.totalLabel}>Net Paid</Text>
-          <Text style={styles.totalValue}>₱{Number(0).toLocaleString()}</Text>
+          <Text style={styles.totalValue}>₱0</Text>
         </View>
         <View style={styles.summaryRow}>
           <Text style={[styles.label, { fontWeight: "700" }]}>Balance Due</Text>
-          <Text style={[styles.value, { fontWeight: "700" }]}>₱{Number(order?.total || (order?.product?.price || 0) + (order?.shippingFee || 510)).toLocaleString()}</Text>
+          <Text style={[styles.value, { fontWeight: "700" }]}>₱{calculatedTotal.toLocaleString()}</Text>
         </View>
       </View>
 
-
-      {/* Payment Section */}
       <View style={styles.paymentCard}>
         <Text style={styles.paymentTitle}>Payment Method</Text>
         <Text style={styles.paymentDescription}>
@@ -545,8 +595,6 @@ export default function PaymentPage({ route, navigation }) {
             )}
         </View>
 
-
-      {/* Buttons */}
       <View style={styles.buttonRow}>
         <TouchableOpacity
           style={styles.cancelBtn}
@@ -565,20 +613,17 @@ export default function PaymentPage({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Help Section */}
       <View style={styles.helpCard}>
         <Text style={styles.helpTitle}>Need Assistance?</Text>
 
-        {/* 💬 Live Chat */}
         <TouchableOpacity
           style={styles.helpRow}
-          onPress={() => navigation.navigate("ChatbotPage")} // replace with your chat screen name
+          onPress={() => navigation.navigate("ChatbotPage")} 
         >
           <Ionicons name="chatbubbles-outline" size={16} color="#2c6e49" />
           <Text style={[styles.helpText, styles.helpLink]}> Live Chat: Online!</Text>
         </TouchableOpacity>
 
-        {/* 📞 Call */}
         <TouchableOpacity
           style={styles.helpRow}
           onPress={() => Linking.openURL("tel:09650934957")}
@@ -587,7 +632,6 @@ export default function PaymentPage({ route, navigation }) {
           <Text style={[styles.helpText, styles.helpLink]}> Call: 0965-093-4957</Text>
         </TouchableOpacity>
 
-        {/* ✉️ Email */}
         <TouchableOpacity
           style={styles.helpRow}
           onPress={() =>
@@ -690,11 +734,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   uploadBox: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: "#2c6e49",
-    backgroundColor: "#eef6f1",
-    borderRadius: 10,
-    paddingVertical: 14,
+    borderStyle: "dashed",
+    backgroundColor: "#eef7f2",
+    borderRadius: 12,
+    paddingVertical: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -703,7 +748,7 @@ const styles = StyleSheet.create({
   uploadText: {
     color: "#2c6e49",
     fontWeight: "600",
-    marginLeft: 6,
+    marginLeft: 8,
   },
   buttonRow: {
     flexDirection: "row",
@@ -759,7 +804,6 @@ helpLink: {
   textDecorationLine: "underline",
   color: "#1b4332",
 },
-
 
   paymentSection: {
   backgroundColor: "#fff",
@@ -916,8 +960,7 @@ uploadOverlay: {
   justifyContent: "center",
   alignItems: "center",
   zIndex: 999,
-  elevation: 999, // for Android layering
-  // 👇 Prevent touches on anything behind the overlay
+  elevation: 999, 
   pointerEvents: "auto",
 },
 
@@ -939,7 +982,4 @@ uploadModalText: {
   color: "#2c6e49",
   textAlign: "center",
 },
-
-
-
 });

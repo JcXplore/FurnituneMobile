@@ -46,18 +46,25 @@ export default function OrderSummary({ navigation, route }) {
   // ✅ Refreshing State
   const [refreshing, setRefreshing] = useState(false);
 
-  const deposit = order?.deposit || 0;
+  // 🟢 Separate Pending vs Verified
+  const isPending = order?.paymentStatus === "pending";
+  const verifiedDeposit = isPending ? 0 : (order?.deposit || 0);
+  const pendingDeposit = isPending ? (order?.deposit || 0) : 0;
+
   const additional = (order?.additionalPaymentsCents || 0) / 100;
   const refunds = order?.refunds || 0;
   const lastPaymentVal = (order?.lastAdditionalPaymentCents || 0) / 100;
-  const pendingPayment = order?.paymentProofPendingReview ? lastPaymentVal : 0;
-  const netPaid = deposit + additional + pendingPayment - refunds;
+  const pendingAdditional = (!isPending && order?.paymentProofPendingReview) ? lastPaymentVal : 0;
+
+  const totalPending = pendingDeposit + pendingAdditional;
+  const netPaid = verifiedDeposit + additional - refunds;
 
   const basePrice =
     Number(order?.priceBreakdown?.totalPHP) ||
+    Number(order?.total) || // Prioritizing total to include shipping
     Number(order?.unitPrice) ||
-    Number(order?.total) ||
     0;
+
   const requestedAdditions = (order?.requestedAdditionalPaymentCents || 0) / 100;
   let assessed = basePrice;
   if (requestedAdditions > 0) {
@@ -65,7 +72,9 @@ export default function OrderSummary({ navigation, route }) {
   } else if (netPaid > basePrice) {
     assessed = netPaid; 
   }
+  
   const due = Math.max(0, assessed - netPaid) + requestedAdditions;
+  const remainingToPay = Math.max(0, due - totalPending); // Prevents duplicate payment prompts
   const [hasEdited, setHasEdited] = useState(false);
   const [customOrder, setCustomOrder] = useState(null);
 
@@ -776,7 +785,7 @@ export default function OrderSummary({ navigation, route }) {
             ₱{(
               order?.source === "repairs"
                 ? order?.total || 0
-                : order?.priceBreakdown?.totalPHP || order?.unitPrice || order?.total || 0
+                : order?.priceBreakdown?.totalPHP || order?.total || order?.unitPrice || 0
             ).toLocaleString()}
           </Text>
         </View>
@@ -792,18 +801,27 @@ export default function OrderSummary({ navigation, route }) {
               ₱{assessed.toLocaleString()}
             </Text>
           </View>
+          
           <View style={styles.priceRow}>
-            <Text style={styles.label}>Deposit</Text>
-            <Text style={styles.value}>₱{(order?.deposit || 0).toLocaleString()}</Text>
-
+            <Text style={styles.label}>Verified Deposit</Text>
+            <Text style={styles.value}>₱{verifiedDeposit.toLocaleString()}</Text>
           </View>
+
+          {/* 🟢 Show Pending Amount in Red if waiting for Admin */}
+          {totalPending > 0 && (
+            <View style={styles.priceRow}>
+              <Text style={[styles.label, { color: '#d9534f' }]}>Pending Verification</Text>
+              <Text style={[styles.value, { color: '#d9534f' }]}>₱{totalPending.toLocaleString()}</Text>
+            </View>
+          )}
+
           <View style={styles.priceRow}>
             <Text style={styles.label}>Additional Payments</Text>
-            <Text style={styles.value}>+₱{(order?.additionalPayments || 0).toLocaleString()}</Text>
+            <Text style={styles.value}>+₱{additional.toLocaleString()}</Text>
           </View>
           <View style={styles.priceRow}>
             <Text style={styles.label}>Refunds</Text>
-            <Text style={styles.value}>-₱{(order?.refunds || 0).toLocaleString()}</Text>
+            <Text style={styles.value}>-₱{refunds.toLocaleString()}</Text>
           </View>
 
           <View style={[styles.priceRow, styles.totalRow, styles.highlightRow]}>
@@ -1330,8 +1348,9 @@ export default function OrderSummary({ navigation, route }) {
         </View>
 
         {/* Show Pay Additional ONLY if due balance > 0 */}
+        {/* Show Pay Additional ONLY if remainingToPay balance > 0 */}
         {(() => {
-          if (due > 0) {
+          if (remainingToPay > 0) {  // 🟢 Changed from 'due > 0'
             return (
               <TouchableOpacity
                 style={styles.payAdditionalsBtn}
@@ -1339,7 +1358,7 @@ export default function OrderSummary({ navigation, route }) {
               >
                 <Ionicons name="cash-outline" size={18} color="#fff" />
                 <Text style={styles.payAdditionalsText}>
-                  Pay Additionals (₱{due.toLocaleString()})
+                  Pay Additionals (₱{remainingToPay.toLocaleString()})
                 </Text>
               </TouchableOpacity>
             );
